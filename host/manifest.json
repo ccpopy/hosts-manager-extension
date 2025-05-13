@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Hosts Manager",
+  "version": "1.0.1",
+  "description": "管理hosts映射，支持分组功能，类似SwitchHosts，可能会与其他代理插件冲突。",
+  "permissions": [
+    "proxy",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "images/icon16.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "images/icon16.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  }
+}
