@@ -6,6 +6,9 @@ on:
       - "v*"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,63 +20,49 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "18"
+          node-version: '18'
 
       - name: Install dependencies
         run: |
-          # 安装 crx3 工具用于打包扩展
           npm install -g crx3
 
       - name: Create extension packages
         run: |
-          # 创建发布目录
           mkdir -p dist
-
-          # 创建 ZIP 包
+          
           cd host
           zip -r ../dist/hosts-manager-${{ github.ref_name }}.zip . \
             -x "*.DS_Store" \
             -x ".git/*" \
             -x ".github/*"
           cd ..
-
-          # 创建不带版本号的 ZIP 文件
+          
           cp dist/hosts-manager-${{ github.ref_name }}.zip dist/hosts-manager.zip
 
       - name: Generate CRX file
-        id: generate_crx
         run: |
           cd host
-
-          # 使用 crx3 生成 CRX 文件
-          # 如果有保存的私钥，可以使用 --key 参数
+          
           if [ "${{ secrets.EXTENSION_PRIVATE_KEY }}" != "" ]; then
-            # 从 secrets 中获取私钥
             echo "${{ secrets.EXTENSION_PRIVATE_KEY }}" | base64 -d > temp.pem
             crx3 pack . --key temp.pem -o ../dist/hosts-manager-${{ github.ref_name }}.crx
             rm -f temp.pem
           else
-            # 生成新的私钥
             crx3 pack . -o ../dist/hosts-manager-${{ github.ref_name }}.crx
           fi
-
+          
           cd ..
-
-          # 创建不带版本号的 CRX 文件
+          
           cp dist/hosts-manager-${{ github.ref_name }}.crx dist/hosts-manager.crx
 
-          # 输出文件信息
-          echo "Generated files:"
-          ls -la dist/
-
       - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
+          files: |
+            dist/hosts-manager.zip
+            dist/hosts-manager-${{ github.ref_name }}.zip
+            dist/hosts-manager.crx
+            dist/hosts-manager-${{ github.ref_name }}.crx
           body: |
             ## Hosts Manager Chrome Extension ${{ github.ref_name }}
 
@@ -89,11 +78,9 @@ jobs:
 
             #### 方法二：使用 CRX 文件
             1. 下载 `hosts-manager.crx` 文件
-            2. 打开 Chrome 扩展管理页面 (`chrome://extensions/`)
+            2. 打开 Chrome 扩展管理页面
             3. 将 CRX 文件拖放到扩展管理页面
             4. 确认安装
-
-            > ⚠️ **注意**：Chrome 可能会阻止非 Chrome Web Store 的 CRX 文件安装。如遇到问题，请使用方法一。
 
             ### 📝 更新日志
 
@@ -105,68 +92,5 @@ jobs:
             - 批量导入功能
             - Socket 代理支持
             - 现代化 UI 界面
-
-            ### 📄 文件说明
-
-            - `hosts-manager.zip` - 扩展源文件（推荐）
-            - `hosts-manager.crx` - 打包的扩展文件
-            - `hosts-manager-${{ github.ref_name }}.zip` - 带版本号的源文件
-            - `hosts-manager-${{ github.ref_name }}.crx` - 带版本号的扩展文件
           draft: false
           prerelease: false
-
-      - name: Upload ZIP file
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/hosts-manager.zip
-          asset_name: hosts-manager.zip
-          asset_content_type: application/zip
-
-      - name: Upload versioned ZIP file
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/hosts-manager-${{ github.ref_name }}.zip
-          asset_name: hosts-manager-${{ github.ref_name }}.zip
-          asset_content_type: application/zip
-
-      - name: Upload CRX file
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/hosts-manager.crx
-          asset_name: hosts-manager.crx
-          asset_content_type: application/x-chrome-extension
-
-      - name: Upload versioned CRX file
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/hosts-manager-${{ github.ref_name }}.crx
-          asset_name: hosts-manager-${{ github.ref_name }}.crx
-          asset_content_type: application/x-chrome-extension
-
-      - name: Generate checksum
-        run: |
-          cd dist
-          sha256sum *.zip *.crx > checksums.txt
-          cd ..
-
-      - name: Upload checksums
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./dist/checksums.txt
-          asset_name: checksums.txt
-          asset_content_type: text/plain
