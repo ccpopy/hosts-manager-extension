@@ -1,0 +1,88 @@
+name: Build and Release Chrome Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Create extension package
+        run: |
+          # 创建发布目录
+          mkdir -p dist
+
+          # 进入 host 目录
+          cd host
+
+          # 创建扩展的 zip 包
+          zip -r ../dist/hosts-manager-${{ github.ref_name }}.zip . \
+            -x "*.DS_Store" \
+            -x ".git/*" \
+            -x ".github/*"
+
+          # 返回根目录
+          cd ..
+
+          # 也创建一个不带版本号的 zip 文件
+          cp dist/hosts-manager-${{ github.ref_name }}.zip dist/hosts-manager.zip
+
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: |
+            ## Hosts Manager Chrome Extension ${{ github.ref_name }}
+
+            ### 📥 安装方法
+
+            1. 下载 `hosts-manager.zip` 文件
+            2. 解压到本地文件夹
+            3. 打开 Chrome 扩展管理页面 (`chrome://extensions/`)
+            4. 开启右上角的"开发者模式"
+            5. 点击"加载已解压的扩展程序"
+            6. 选择解压后的文件夹
+
+            ### 📝 更新日志
+
+            请查看 [完整更新日志](https://github.com/${{ github.repository }}/commits/${{ github.ref_name }})
+
+            ### 🔧 功能特点
+
+            - 分组管理 hosts 规则
+            - 批量导入功能
+            - Socket 代理支持
+            - 现代化 UI 界面
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/hosts-manager.zip
+          asset_name: hosts-manager.zip
+          asset_content_type: application/zip
+
+      - name: Upload Versioned Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/hosts-manager-${{ github.ref_name }}.zip
+          asset_name: hosts-manager-${{ github.ref_name }}.zip
+          asset_content_type: application/zip

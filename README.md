@@ -55,20 +55,23 @@
 ### 项目结构
 
 ```
-hosts-manager-extension/
-├── manifest.json          # 扩展清单文件
-├── background.js          # 后台脚本
-├── popup.html            # 弹出窗口
-├── page.html             # 主页面
-├── css/
-│   └── page.css          # 样式文件
-├── js/
-│   ├── page.js           # 主页面脚本
-│   └── popup.js          # 弹出窗口脚本
-└── images/               # 图标文件
-    ├── icon16.png
-    ├── icon48.png
-    └── icon128.png
+hosts-manager-extension
+├── README.md                 # 项目说明文件
+├── LICENSE                  # 许可证文件
+├── host/
+    ├── manifest.json          # 扩展清单文件
+    ├── background.js          # 后台脚本
+    ├── popup.html            # 弹出窗口
+    ├── page.html             # 主页面
+    ├── css/
+    │   └── page.css          # 样式文件
+    ├── js/
+    │   ├── page.js           # 主页面脚本
+    │   └── popup.js          # 弹出窗口脚本
+    └── images/               # 图标文件
+        ├── icon16.png
+        ├── icon48.png
+        └── icon128.png
 ```
 
 ### 构建发布
