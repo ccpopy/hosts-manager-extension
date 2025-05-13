@@ -11,7 +11,9 @@
   <a href="https://github.com/ccpopy/hosts-manager-extension/stargazers"><img src="https://img.shields.io/github/stars/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/ccpopy/hosts-manager-extension/issues"><img src="https://img.shields.io/github/issues/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub issues"></a>
   <a href="https://github.com/ccpopy/hosts-manager-extension/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ccpopy/hosts-manager-extension?style=flat-square" alt="License"></a>
-  <a href="https://chrome.google.com/webstore"><img src="https://img.shields.io/badge/Chrome%20Web%20Store-Coming%20Soon-blue?style=flat-square" alt="Chrome Web Store"></a>
+  <a href="https://chromewebstore.google.com/detail/hosts-manager/ekofkbkmenfagdkijaplfbdcdnlddjod" target="_blank"><img src="https://img.shields.io/chrome-web-store/v/ekofkbkmenfagdkijaplfbdcdnlddjod?style=flat-square" alt="Chrome Web Store Version"></a>
+  <a href="https://chromewebstore.google.com/detail/hosts-manager/ekofkbkmenfagdkijaplfbdcdnlddjod" target="_blank"><img src="https://img.shields.io/chrome-web-store/users/ekofkbkmenfagdkijaplfbdcdnlddjod?style=flat-square" alt="Chrome Web Store Users"></a>
+  <a href="https://microsoftedge.microsoft.com/addons/Microsoft-Edge-Extensions-Home?hl=zh-CN"><img src="https://img.shields.io/badge/Edge%20Store-Coming%20Soon-0078D7?style=flat-square" alt="Edge 拓展"></a>
 </p>
 
 ## 🎯 功能特点
@@ -95,7 +97,6 @@ cd hosts-manager-extension
 ## 🛠️ 技术栈
 
 - **框架**：原生 JavaScript + Chrome Extensions API
-- **UI**：Material Design 风格
 - **构建**：GitHub Actions 自动化构建
 - **版本**：Manifest V3
 
@@ -172,7 +173,7 @@ git push origin v1.0.0
 
 ## 🌟 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ccpopy/hosts-manager-extension&type=Date)](https://star-history.com/#ccpopy/hosts-manager-extension&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=ccpopy/hosts-manager-extension&type=Date)](https://www.star-history.com/#ccpopy/hosts-manager-extension&Date)
 
 ## 📮 联系作者
 
