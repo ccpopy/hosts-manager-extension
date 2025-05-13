@@ -1,18 +1,18 @@
 # Hosts Manager Extension
 
-<div align="center">
+<p align="center">
+  <img src="host/images/icon128.png" alt="Logo">
+</p>
 
-![Logo](host/images/icon128.png)
+<h3 align="center">一个用于管理 hosts 映射的浏览器扩展，支持分组功能</h3>
 
-一个用于管理 hosts 映射的 Chrome 扩展，支持分组功能
-
-[![GitHub release](https://img.shields.io/github/v/release/ccpopy/hosts-manager-extension?style=flat-square)](https://github.com/ccpopy/hosts-manager-extension/releases)
-[![GitHub stars](https://img.shields.io/github/stars/ccpopy/hosts-manager-extension?style=flat-square)](https://github.com/ccpopy/hosts-manager-extension/stargazers)
-[![GitHub issues](https://img.shields.io/github/issues/ccpopy/hosts-manager-extension?style=flat-square)](https://github.com/ccpopy/hosts-manager-extension/issues)
-[![License](https://img.shields.io/github/license/ccpopy/hosts-manager-extension?style=flat-square)](https://github.com/ccpopy/hosts-manager-extension/blob/main/LICENSE)
-[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Coming%20Soon-blue?style=flat-square)](https://chrome.google.com/webstore)
-
-</div>
+<p align="center">
+  <a href="https://github.com/ccpopy/hosts-manager-extension/releases"><img src="https://img.shields.io/github/v/release/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub release"></a>
+  <a href="https://github.com/ccpopy/hosts-manager-extension/stargazers"><img src="https://img.shields.io/github/stars/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub stars"></a>
+  <a href="https://github.com/ccpopy/hosts-manager-extension/issues"><img src="https://img.shields.io/github/issues/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub issues"></a>
+  <a href="https://github.com/ccpopy/hosts-manager-extension/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ccpopy/hosts-manager-extension?style=flat-square" alt="License"></a>
+  <a href="https://chrome.google.com/webstore"><img src="https://img.shields.io/badge/Chrome%20Web%20Store-Coming%20Soon-blue?style=flat-square" alt="Chrome Web Store"></a>
+</p>
 
 ## 🎯 功能特点
 
@@ -25,18 +25,9 @@
 
 ## 📸 界面截图
 
-<div align="center">
+![主界面](screenshots/hosts.png)
 
-![主界面](screenshots/main-interface.png)
-_主界面 - 分组管理_
-
-![批量导入](screenshots/import-dialog.png)
-_批量导入功能_
-
-![Socket 代理](screenshots/socket-proxy.png)
-_Socket 代理配置_
-
-</div>
+<p align="center">主界面 - 分组管理</p>
 
 ## 🚀 安装方法
 
@@ -190,8 +181,6 @@ git push origin v1.0.0
 
 ---
 
-<div align="center">
-  
-**如果觉得这个项目对你有帮助，请给个 ⭐ Star 支持一下！**
-
-</div>
+<p align="center">
+  <strong>如果觉得这个项目对你有帮助，请给个 ⭐ Star 支持一下！</strong>
+</p>
