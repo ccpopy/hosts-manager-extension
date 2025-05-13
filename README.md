@@ -1,4 +1,4 @@
-# Hosts Manager Chrome Extension
+# Hosts Manager Extension
 
 一个用于管理 hosts 映射的 Chrome 扩展，支持分组功能。
 
@@ -28,7 +28,7 @@
 1. 克隆本仓库：
 
    ```bash
-   git clone https://github.com/linmew/hosts-manager-extension.git
+   git clone https://github.com/ccpopy/hosts-manager-extension.git
    cd hosts-manager-extension
    ```
 
