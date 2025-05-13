@@ -1,0 +1,111 @@
+name: Build and Release Chrome Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          npm install -g crx3
+
+      - name: Create extension packages
+        run: |
+          mkdir -p dist
+          
+          # Create ZIP
+          cd host
+          zip -r ../dist/hosts-manager-${{ github.ref_name }}.zip . \
+            -x "*.DS_Store" \
+            -x ".git/*" \
+            -x ".github/*"
+          cd ..
+          
+          # Copy without version
+          cp dist/hosts-manager-${{ github.ref_name }}.zip dist/hosts-manager.zip
+
+      - name: Generate CRX file
+        run: |
+          cd host
+          
+          # Generate CRX
+          if [ "${{ secrets.EXTENSION_PRIVATE_KEY }}" != "" ]; then
+            echo "${{ secrets.EXTENSION_PRIVATE_KEY }}" | base64 -d > temp.pem
+            crx3 pack . --key temp.pem -o ../dist/hosts-manager-${{ github.ref_name }}.crx || true
+            rm -f temp.pem
+          else
+            crx3 pack . -o ../dist/hosts-manager-${{ github.ref_name }}.crx || true
+          fi
+          
+          cd ..
+          
+          # Copy without version if exists
+          if [ -f "dist/hosts-manager-${{ github.ref_name }}.crx" ]; then
+            cp dist/hosts-manager-${{ github.ref_name }}.crx dist/hosts-manager.crx
+          fi
+
+      - name: List files
+        run: |
+          echo "Files in dist:"
+          ls -la dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/hosts-manager.zip
+            dist/hosts-manager-${{ github.ref_name }}.zip
+            dist/hosts-manager.crx
+            dist/hosts-manager-${{ github.ref_name }}.crx
+          body: |
+            ## Hosts Manager Chrome Extension ${{ github.ref_name }}
+
+            ### 📥 安装方法
+
+            #### 方法一：下载 ZIP 文件（推荐）
+            1. 下载 `hosts-manager.zip` 文件
+            2. 解压到本地文件夹
+            3. 打开 Chrome 扩展管理页面 (`chrome://extensions/`)
+            4. 开启右上角的"开发者模式"
+            5. 点击"加载已解压的扩展程序"
+            6. 选择解压后的文件夹
+
+            #### 方法二：使用 CRX 文件
+            1. 下载 `hosts-manager.crx` 文件
+            2. 打开 Chrome 扩展管理页面
+            3. 将 CRX 文件拖放到扩展管理页面
+            4. 确认安装
+
+            ### 📝 更新日志
+
+            请查看 [完整更新日志](https://github.com/${{ github.repository }}/commits/${{ github.ref_name }})
+
+            ### 🔧 功能特点
+
+            - 分组管理 hosts 规则
+            - 批量导入功能
+            - Socket 代理支持
+            - 现代化 UI 界面
