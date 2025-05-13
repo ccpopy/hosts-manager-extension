@@ -12,7 +12,6 @@
   <a href="https://github.com/ccpopy/hosts-manager-extension/issues"><img src="https://img.shields.io/github/issues/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub issues"></a>
   <a href="https://github.com/ccpopy/hosts-manager-extension/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ccpopy/hosts-manager-extension?style=flat-square" alt="License"></a>
   <a href="https://chromewebstore.google.com/detail/hosts-manager/ekofkbkmenfagdkijaplfbdcdnlddjod" target="_blank"><img src="https://img.shields.io/chrome-web-store/v/ekofkbkmenfagdkijaplfbdcdnlddjod?style=flat-square" alt="Chrome Web Store Version"></a>
-  <a href="https://chromewebstore.google.com/detail/hosts-manager/ekofkbkmenfagdkijaplfbdcdnlddjod" target="_blank"><img src="https://img.shields.io/chrome-web-store/users/ekofkbkmenfagdkijaplfbdcdnlddjod?style=flat-square" alt="Chrome Web Store Users"></a>
   <a href="https://microsoftedge.microsoft.com/addons/Microsoft-Edge-Extensions-Home?hl=zh-CN"><img src="https://img.shields.io/badge/Edge%20Store-Coming%20Soon-0078D7?style=flat-square" alt="Edge 拓展"></a>
 </p>
 
@@ -23,7 +22,7 @@
 - 📝 **批量导入** - 支持从文件或剪贴板批量导入规则
 - 🌐 **Socket 代理** - 内置 Socket 代理配置支持
 - 💾 **本地存储** - 所有数据本地保存，安全可靠
-- 🎨 **现代界面** - 清爽简洁的 Material Design 风格
+- 🎨 **现代界面** - 清爽简洁风格
 
 ## 📸 界面截图
 
