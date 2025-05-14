@@ -11,14 +11,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 监听存储变化
   chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (changes.hostsGroups || changes.activeGroups) {
+    // 如果是 activeGroups 变化，重新加载整个列表
+    if (changes.activeGroups) {
       loadGroups();
+    }
+    // 如果是 hostsGroups 变化，可能是单个规则的状态变化
+    else if (changes.hostsGroups && !changes.activeGroups) {
+      // 不重新加载整个列表
     }
     if (changes.socketProxy) {
       loadProxyStatus();
     }
   });
 });
+
+// 用于存储分组展开状态
+const expandedGroups = new Set();
 
 // 加载分组列表
 async function loadGroups () {
@@ -41,6 +49,7 @@ async function loadGroups () {
     // 创建分组容器
     const groupSection = document.createElement('div');
     groupSection.className = 'group-section';
+    groupSection.dataset.groupId = group.id;
 
     // 创建分组头
     const groupHeader = document.createElement('div');
@@ -79,11 +88,18 @@ async function loadGroups () {
     const groupContent = document.createElement('div');
     groupContent.className = 'group-content';
 
+    // 如果之前是展开的，保持展开状态
+    if (expandedGroups.has(group.id)) {
+      arrow.classList.add('expanded');
+      groupContent.classList.add('expanded');
+    }
+
     // 添加规则列表
     if (group.hosts && group.hosts.length > 0) {
       group.hosts.forEach(host => {
         const ruleItem = document.createElement('div');
         ruleItem.className = 'rule-item';
+        ruleItem.dataset.hostId = host.id;
 
         const ruleContent = document.createElement('div');
         ruleContent.className = 'rule-content';
@@ -104,6 +120,8 @@ async function loadGroups () {
         const ruleToggleInput = document.createElement('input');
         ruleToggleInput.type = 'checkbox';
         ruleToggleInput.checked = host.enabled;
+        ruleToggleInput.dataset.groupId = group.id;
+        ruleToggleInput.dataset.hostId = host.id;
         ruleToggleInput.addEventListener('change', () => {
           toggleHost(group.id, host.id, ruleToggleInput.checked);
         });
@@ -134,6 +152,13 @@ async function loadGroups () {
       if (e.target.tagName !== 'INPUT' && !e.target.closest('.toggle-switch')) {
         arrow.classList.toggle('expanded');
         groupContent.classList.toggle('expanded');
+
+        // 记录展开状态
+        if (arrow.classList.contains('expanded')) {
+          expandedGroups.add(group.id);
+        } else {
+          expandedGroups.delete(group.id);
+        }
       }
     });
 
@@ -158,7 +183,6 @@ async function loadProxyStatus () {
     proxySwitch.checked = false;
     proxySwitch.disabled = true;
 
-    // 点击整个项目跳转到设置页
     proxyItem.style.cursor = 'pointer';
     proxyItem.onclick = () => {
       chrome.tabs.create({ url: 'page.html' });
@@ -224,7 +248,13 @@ function toggleHost (groupId, hostId, enabled) {
 
       if (hostIndex !== -1) {
         hostsGroups[groupIndex].hosts[hostIndex].enabled = enabled;
-        chrome.storage.local.set({ hostsGroups });
+        chrome.storage.local.set({ hostsGroups }, () => {
+          // 更新单个规则的状态而不重新加载整个组
+          const ruleToggleInput = document.querySelector(`input[data-host-id="${hostId}"]`);
+          if (ruleToggleInput) {
+            ruleToggleInput.checked = enabled;
+          }
+        });
         chrome.runtime.sendMessage({ action: 'updateProxySettings' });
       }
     }

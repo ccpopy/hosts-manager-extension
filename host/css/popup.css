@@ -7,21 +7,22 @@ body {
 }
 
 .popup-container {
-  background: white;
-  border-radius: 8px;
+  background: #f9fafb;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .menu-item {
   display: flex;
   align-items: center;
   padding: 12px 16px;
+  padding-right: 24px;
   cursor: pointer;
   transition: background-color 0.2s;
   color: #333;
   text-decoration: none;
-  border-bottom: 1px solid #e5e7eb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background-color: #fff;
 }
 
 .menu-item:hover {
@@ -34,7 +35,11 @@ body {
   padding: 12px 16px;
   color: #333;
   text-decoration: none;
-  border-bottom: 1px solid #e5e7eb;
+  border: 1px solid #e5e7eb;
+  font-weight: 600;
+  margin-top: 8px;
+  background-color: #fff;
+  border-radius: 8px 8px 0 0;
 }
 
 .menu-icon {
@@ -174,10 +179,15 @@ input:checked + .slider:before {
 
 #groups-list {
   padding: 0 8px;
-  border-bottom: 1px solid #e5e7eb;
+  border: 1px solid #e5e7eb;
+  border-top: none;
+  background-color: #fff;
+  margin-bottom: 8px;
+  border-radius: 0 0 8px 8px;
 }
 
 .group-section {
+  padding: 4px 0;
   border-bottom: 1px solid #e5e7eb;
 }
 
@@ -188,7 +198,7 @@ input:checked + .slider:before {
 .group-header {
   display: flex;
   align-items: center;
-  padding: 12px 16px;
+  padding: 8px 16px;
   cursor: pointer;
   transition: background-color 0.2s;
 }
