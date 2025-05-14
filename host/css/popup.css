@@ -238,3 +238,33 @@ input:checked + .slider:before {
   color: #6b7280;
   font-size: 14px;
 }
+
+/* GitHub 链接样式 */
+.github-section {
+  text-align: center;
+  padding-top: 8px;
+}
+
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  color: #24292e;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  border-radius: 6px;
+}
+
+.github-link:hover {
+  background-color: #f6f8fa;
+  transform: translateY(-1px);
+}
+
+.github-link svg {
+  fill: currentColor;
+  transition: all 0.2s ease;
+}
+
+.github-link:hover svg {
+  fill: #0366d6;
+}
