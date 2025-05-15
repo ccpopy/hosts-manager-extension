@@ -1033,6 +1033,36 @@ function deleteGroup (groupId) {
     chrome.storage.local.set({
       hostsGroups: newHostsGroups,
       activeGroups: newActiveGroups
+    }, () => {
+      // 从 DOM 中移除分组元素
+      const groupItem = document.querySelector(`.group-item:has([data-group-id="${groupId}"])`);
+      if (groupItem) {
+        groupItem.remove();
+
+        // 检查是否需要显示空状态
+        const groupList = document.querySelector('.group-list');
+        const remainingGroups = groupList.querySelectorAll('.group-item');
+
+        if (remainingGroups.length === 0) {
+          // 如果没有分组了，显示空状态
+          const emptyState = document.createElement('div');
+          emptyState.className = 'empty-state';
+
+          const emptyIcon = document.createElement('div');
+          emptyIcon.className = 'empty-state-icon';
+          emptyIcon.innerHTML = '📝';
+
+          const emptyText = document.createElement('p');
+          emptyText.textContent = '还没有任何分组，点击"添加分组"创建一个新分组。';
+
+          emptyState.appendChild(emptyIcon);
+          emptyState.appendChild(emptyText);
+          groupList.appendChild(emptyState);
+        }
+      }
+
+      // 发送消息到后台脚本更新代理设置
+      chrome.runtime.sendMessage({ action: 'updateProxySettings' });
     });
   });
 }
