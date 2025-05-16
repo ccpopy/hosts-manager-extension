@@ -12,7 +12,7 @@
   <a href="https://github.com/ccpopy/hosts-manager-extension/issues"><img src="https://img.shields.io/github/issues/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub issues"></a>
   <a href="https://github.com/ccpopy/hosts-manager-extension/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ccpopy/hosts-manager-extension?style=flat-square" alt="License"></a>
   <a href="https://chromewebstore.google.com/detail/hosts-manager/ekofkbkmenfagdkijaplfbdcdnlddjod" target="_blank"><img src="https://img.shields.io/chrome-web-store/v/ekofkbkmenfagdkijaplfbdcdnlddjod?style=flat-square" alt="Chrome Web Store Version"></a>
-  <a href="https://microsoftedge.microsoft.com/addons/Microsoft-Edge-Extensions-Home?hl=zh-CN"><img src="https://img.shields.io/badge/Edge%20Store-Coming%20Soon-0078D7?style=flat-square" alt="Edge 拓展"></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/hosts-manager/kdfieneakcjfaiglimggmamepimpklkj" target="_blank"><img src="https://img.shields.io/badge/dynamic/json?label=Edge%20Addons&prefix=v&query=$.version&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/apeejdinnfjjlajmihbpojcapdkghbki&style=flat-square&color=0078D7" alt="Edge 拓展"></a>
 </p>
 
 ## 🎯 功能特点
@@ -167,7 +167,7 @@ git push origin v1.0.0
 - [ ] ⚡ **性能优化** - 优化大量规则时的渲染性能
 
 ### 平台支持
-- [ ] 🖥️ **支持 Edge 扩展** - 发布到 Edge 扩展商店
+- [x] 🖥️ **支持 Edge 扩展** - 发布到 Edge 扩展商店
 
 ### 文档完善
 - [ ] 🌐 **英文文档** - 提供英文版 README
