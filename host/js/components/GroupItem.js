@@ -1,5 +1,4 @@
-import StorageService from '../services/StorageService.js';
-import ProxyService from '../services/ProxyService.js';
+import StateService from '../services/StateService.js';
 import Modal from './Modal.js';
 import { createHostElement, createAddHostForm } from './HostItem.js';
 
@@ -50,20 +49,16 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
     // 阻止事件冒泡，避免触发分组展开/收起
     e.stopPropagation();
 
-    await StorageService.toggleGroup(group.id, checkbox.checked);
-    await ProxyService.updateProxySettings();
+    // 使用 StateService 切换分组状态
+    await StateService.toggleGroup(group.id, checkbox.checked);
 
+    // 立即更新 UI 状态
     statusTag.className = checkbox.checked ? 'status-tag status-tag-success' : 'status-tag status-tag-default';
     statusTag.textContent = checkbox.checked ? '已启用' : '已禁用';
 
-    // 通知父组件这个分组需要更新
+    // 如果提供了更新回调，则调用
     if (onUpdate) {
-      // 更新完成后获取最新的分组对象并传递给回调
-      const groups = await StorageService.getGroups();
-      const updatedGroup = groups.find(g => g.id === group.id);
-      if (updatedGroup) {
-        onUpdate(updatedGroup);
-      }
+      onUpdate();
     }
   });
 
@@ -98,36 +93,8 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
   if (group.hosts && group.hosts.length > 0) {
     group.hosts.forEach(host => {
       // 使用主机元素更新回调来避免整个分组重新渲染
-      const hostUpdateCallback = async (updatedHost) => {
-        if (!updatedHost) return;
-
-        // 如果是删除操作触发的更新
-        if (updatedHost === 'deleted') {
-          // 检查分组是否还有其他主机
-          const updatedGroups = await StorageService.getGroups();
-          const currentGroup = updatedGroups.find(g => g.id === group.id);
-
-          if (currentGroup && currentGroup.hosts.length === 0) {
-            // 如果没有主机了，添加空状态
-            const hostsContainer = groupContent.querySelector('.hosts-container');
-            if (hostsContainer) {
-              hostsContainer.innerHTML = '';
-
-              const emptyHosts = document.createElement('div');
-              emptyHosts.className = 'empty-state';
-              emptyHosts.style.padding = '16px 0';
-              emptyHosts.style.color = 'var(--gray-500)';
-              emptyHosts.textContent = '该分组还没有hosts条目';
-
-              hostsContainer.appendChild(emptyHosts);
-            }
-          }
-
-          return;
-        }
-
-        // 如果传入的是具体主机对象，说明是编辑操作
-        // 这里什么都不做，因为HostItem组件内部已经处理了DOM更新
+      const hostUpdateCallback = () => {
+        // 不需要任何操作，StateService 会处理状态更新和通知
       };
 
       const hostItem = createHostElement(group.id, host, hostUpdateCallback);
@@ -155,26 +122,10 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
   formTitle.textContent = '添加新规则';
   groupContent.appendChild(formTitle);
 
-  // 添加主机表单
-  // 定义单个主机添加完成后的回调，避免整个分组重新渲染
-  const hostAddCallback = async (newHost) => {
-    if (!newHost) return;
-
-    // 检查是否存在空状态，如果存在则移除
-    const hostsContainer = groupContent.querySelector('.hosts-container');
-    if (hostsContainer) {
-      hostsContainer.innerHTML = '';
-    }
-
-    // 获取正确的位置添加新主机
-    const insertPosition = groupContent.querySelector('.section-title');
-    if (insertPosition) {
-      const hostItem = createHostElement(group.id, newHost, hostAddCallback);
-      groupContent.insertBefore(hostItem, insertPosition);
-    }
-  };
-
-  createAddHostForm(group.id, groupContent, hostAddCallback);
+  // 添加主机表单，包含回调
+  createAddHostForm(group.id, groupContent, () => {
+    // 不需要特殊处理，StateService 会触发更新
+  });
 
   // 分组编辑/删除操作
   const actionButtons = document.createElement('div');
@@ -188,19 +139,11 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
     e.stopPropagation();
     const newName = await Modal.prompt('重命名分组', '输入新的分组名称:', group.name);
     if (newName && newName.trim()) {
-      // 本地更新分组名称
-      groupName.textContent = newName.trim();
-
-      // 保存到存储中
-      await StorageService.updateGroup(group.id, { name: newName.trim() });
-
-      // 更新完成后获取最新的分组对象并传递给回调
-      if (onUpdate) {
-        const groups = await StorageService.getGroups();
-        const updatedGroup = groups.find(g => g.id === group.id);
-        if (updatedGroup) {
-          onUpdate(updatedGroup);
-        }
+      // 使用 StateService 更新分组名称
+      const success = await StateService.updateGroup(group.id, { name: newName.trim() });
+      if (success) {
+        // 本地更新分组名称
+        groupName.textContent = newName.trim();
       }
     }
   });
@@ -212,8 +155,8 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
     e.stopPropagation();
     const confirmed = await Modal.confirm('删除分组', `确定要删除分组 "${group.name}" 吗?`);
     if (confirmed) {
-      await StorageService.deleteGroup(group.id);
-      await ProxyService.updateProxySettings();
+      // 使用 StateService 删除分组
+      await StateService.deleteGroup(group.id);
 
       // 从DOM中移除分组元素
       groupItem.remove();

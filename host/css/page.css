@@ -324,6 +324,7 @@ body {
 /* Input Styles */
 input[type="text"],
 input[type="number"],
+input[type="password"],
 select,
 textarea {
   width: 100%;
@@ -338,6 +339,7 @@ textarea {
 
 input[type="text"]:hover,
 input[type="number"]:hover,
+input[type="password"]:hover,
 select:hover,
 textarea:hover {
   border-color: var(--gray-400);
@@ -345,6 +347,7 @@ textarea:hover {
 
 input[type="text"]:focus,
 input[type="number"]:focus,
+input[type="password"]:focus,
 select:focus,
 textarea:focus {
   outline: none;
@@ -760,12 +763,108 @@ input:checked + .slider:before {
   line-height: 1.8;
 }
 
-/* Message */
-.message-temp {
-  line-height: 26px;
-  border-radius: var(--rounded);
-  font-size: 14px;
-  animation: fadeIn 0.2s ease;
+/* 消息容器 */
+.ant-message {
+  position: fixed;
+  top: 8px;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 1010;
+}
+
+/* 消息通知 */
+.ant-message-notice {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  background: transparent;
+  margin-bottom: 8px;
+  padding: 0;
+  text-align: center;
+  transition: all 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  max-width: 80%;
+}
+
+/* 消息通知进入 */
+.ant-message-notice.ant-message-notice-enter {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, 0);
+}
+
+/* 消息通知离开 */
+.ant-message-notice.ant-message-notice-leave {
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(-50%, -100%);
+}
+
+/* 消息内容容器 */
+.ant-message-notice-content {
+  display: inline-block;
+  padding: 10px 16px;
+  background: #fff;
+  border-radius: var(--rounded-lg);
+  box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 9px 28px 8px rgba(0, 0, 0, 0.05);
+  pointer-events: auto;
+}
+
+/* 消息自定义内容 */
+.ant-message-custom-content {
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* 消息图标 */
+.ant-message-icon {
+  display: inline-block;
+  margin-right: 8px;
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* 消息文本 */
+.ant-message-text {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* 预格式化文本（用于对象和数组） */
+.ant-message-text.pre-formatted {
+  white-space: pre-wrap;
+  font-family: "SF Mono", Monaco, "Cascadia Mono", "Roboto Mono", monospace;
+  font-size: 13px;
+  text-overflow: clip;
+  overflow: visible;
+}
+
+/* 信息类型消息 */
+.ant-message-info .ant-message-icon {
+  color: var(--primary-color);
+}
+
+/* 成功类型消息 */
+.ant-message-success .ant-message-icon {
+  color: var(--success-color);
+}
+
+/* 警告类型消息 */
+.ant-message-warning .ant-message-icon {
+  color: var(--warning-color);
+}
+
+/* 错误类型消息 */
+.ant-message-error .ant-message-icon {
+  color: var(--error-color);
 }
 
 /* Host Edit Form */

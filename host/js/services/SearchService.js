@@ -4,62 +4,6 @@
  */
 export default class SearchService {
   /**
-   * 搜索主机
-   * @param {Array} groups - 分组数组
-   * @param {string} keyword - 搜索关键字
-   * @returns {Object} - 包含匹配的分组和主机信息
-   */
-  static search (groups, keyword) {
-    if (!keyword) {
-      return {
-        matchedGroups: [],
-        totalMatches: 0
-      };
-    }
-
-    const lowercaseKeyword = keyword.toLowerCase();
-    const matchedGroups = [];
-    let totalMatches = 0;
-
-    groups.forEach(group => {
-      const matchedHosts = [];
-
-      // 遍历所有主机，找出所有匹配的主机
-      group.hosts.forEach(host => {
-        const ipMatch = host.ip.toLowerCase().includes(lowercaseKeyword);
-        const domainMatch = host.domain.toLowerCase().includes(lowercaseKeyword);
-
-        if (ipMatch || domainMatch) {
-          // 添加匹配的主机到结果
-          matchedHosts.push({
-            ...host,
-            _matches: {
-              ip: ipMatch,
-              domain: domainMatch
-            }
-          });
-        }
-      });
-
-      if (matchedHosts.length > 0) {
-        matchedGroups.push({
-          id: group.id,
-          name: group.name,
-          hosts: matchedHosts,
-          matchCount: matchedHosts.length
-        });
-
-        totalMatches += matchedHosts.length;
-      }
-    });
-
-    return {
-      matchedGroups,
-      totalMatches
-    };
-  }
-
-  /**
    * 高亮文本中的关键字
    * @param {string} text - 原始文本
    * @param {string} keyword - 要高亮的关键字

@@ -1,6 +1,5 @@
-import StorageService from '../services/StorageService.js';
-import ProxyService from '../services/ProxyService.js';
-import { showMessage } from '../utils/MessageUtils.js';
+import StateService from '../services/StateService.js';
+import { Message } from '../utils/MessageUtils.js';
 
 /**
  * 创建添加分组表单
@@ -80,7 +79,7 @@ export function createAddGroupForm (onSave, onCancel) {
     const enabled = checkbox.checked;
 
     if (!name) {
-      showMessage(formActions, '请输入分组名称', 'error');
+      Message.error('请输入分组名称');
       return;
     }
 
@@ -91,11 +90,15 @@ export function createAddGroupForm (onSave, onCancel) {
       enabled: true
     };
 
-    // 添加分组到存储
-    await StorageService.addGroup(newGroup, enabled);
+    // 使用 StateService 添加分组
+    const success = await StateService.addGroup(newGroup, enabled);
 
-    // 回调传递新添加的分组
-    if (onSave) onSave(newGroup);
+    if (success) {
+      // 回调传递新添加的分组
+      if (onSave) onSave(newGroup);
+    } else {
+      Message.error('分组名称已存在');
+    }
   });
 
   formActions.appendChild(cancelBtn);

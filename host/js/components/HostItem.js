@@ -1,8 +1,7 @@
-import StorageService from '../services/StorageService.js';
-import ProxyService from '../services/ProxyService.js';
+import StateService from '../services/StateService.js';
 import SearchService from '../services/SearchService.js';
 import Modal from './Modal.js';
-import { showMessage } from '../utils/MessageUtils.js';
+import { Message } from '../utils/MessageUtils.js';
 
 /**
  * 创建主机元素
@@ -26,13 +25,10 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
   enabledCheckbox.className = 'host-enabled';
   enabledCheckbox.checked = host.enabled;
   enabledCheckbox.addEventListener('change', async () => {
-    // 更新存储
-    await StorageService.toggleHost(groupId, host.id, enabledCheckbox.checked);
-    await ProxyService.updateProxySettings();
+    // 使用 StateService 切换主机状态
+    await StateService.toggleHost(groupId, host.id, enabledCheckbox.checked);
 
-    // 立即通知上层组件主机已切换状态
     if (onUpdate) {
-      // 传递'toggled'表示这是启用/禁用操作
       onUpdate('toggled');
     }
   });
@@ -75,9 +71,11 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
       `确定要删除规则 "${host.ip} ${host.domain}" 吗？`
     );
     if (confirmed) {
-      // 执行删除操作
-      await StorageService.deleteHost(groupId, host.id);
-      await ProxyService.updateProxySettings();
+      // 使用 StateService 删除主机
+      await StateService.deleteHost(groupId, host.id);
+
+      // 从DOM中移除主机项
+      hostItem.remove();
 
       // 立即通知上层组件主机已删除
       if (onUpdate) {
@@ -128,9 +126,8 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
     const newDomain = domainInput.value.trim();
 
     if (newIp && newDomain) {
-      // 更新主机数据
-      const updatedHost = await StorageService.updateHost(groupId, hostId, { ip: newIp, domain: newDomain });
-      await ProxyService.updateProxySettings();
+      // 使用 StateService 更新主机
+      const updatedHost = await StateService.updateHost(groupId, hostId, { ip: newIp, domain: newDomain });
 
       if (updatedHost) {
         // 创建更新后的主机元素并替换编辑表单
@@ -141,9 +138,11 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
         if (onUpdate) {
           onUpdate(updatedHost);
         }
+      } else {
+        Message.error('IP和域名组合已存在，无法更新');
       }
     } else {
-      showMessage(editForm, 'IP和域名不能为空', 'error');
+      Message.error('IP和域名不能为空');
     }
   });
 
@@ -152,9 +151,8 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   cancelButton.textContent = '取消';
   cancelButton.addEventListener('click', async () => {
     // 获取最新的主机数据
-    const groups = await StorageService.get('hostsGroups');
-    const hostsGroups = groups.hostsGroups || [];
-    const group = hostsGroups.find(g => g.id === groupId);
+    const state = StateService.getState();
+    const group = state.hostsGroups.find(g => g.id === groupId);
 
     if (group) {
       const host = group.hosts.find(h => h.id === hostId);
@@ -212,28 +210,29 @@ export function createAddHostForm (groupId, container, onAdd) {
         const ip = parts[0];
         const domain = parts[1];
 
-        // 创建搜索更新回调
-        const searchUpdateCallback = async () => {
-          // 检查是否在HostsPage实例中，如果是，可能需要更新搜索结果
-          const hostsPage = findHostsPageInstance(container);
-          if (hostsPage && hostsPage.searchKeyword) {
-            // 获取最新的分组
-            const groups = await StorageService.getGroups();
-            // 重新执行搜索
-            hostsPage.performSearch(groups);
-          }
+        // 创建新主机对象
+        const newHost = {
+          id: Date.now().toString(),
+          ip,
+          domain,
+          enabled: true
         };
 
-        // 添加主机并获取新主机对象，传入搜索更新回调
-        const newHost = await addHost(groupId, ip, domain, searchUpdateCallback);
+        // 使用 StateService 添加主机
+        const success = await StateService.addHost(groupId, newHost);
 
-        if (newHost && onAdd) {
-          onAdd(newHost);
+        if (success) {
+          // 清空输入框
+          ruleInput.value = '';
+
+          if (onAdd) {
+            onAdd(newHost);
+          }
+        } else {
+          Message.error('规则已存在或格式无效');
         }
-
-        ruleInput.value = '';
       } else {
-        showMessage(fullRuleDiv, '请输入有效的规则格式: [IP地址] [域名]', 'error');
+        Message.error('请输入有效的规则格式: [IP地址] [域名]');
       }
     }
   });
@@ -269,29 +268,30 @@ export function createAddHostForm (groupId, container, onAdd) {
     const domain = domainInput.value.trim();
 
     if (ip && domain) {
-      // 创建搜索更新回调
-      const searchUpdateCallback = async () => {
-        // 检查是否在HostsPage实例中，如果是，可能需要更新搜索结果
-        const hostsPage = findHostsPageInstance(container);
-        if (hostsPage && hostsPage.searchKeyword) {
-          // 获取最新的分组
-          const groups = await StorageService.getGroups();
-          // 重新执行搜索
-          hostsPage.performSearch(groups);
-        }
+      // 创建新主机对象
+      const newHost = {
+        id: Date.now().toString(),
+        ip,
+        domain,
+        enabled: true
       };
 
-      // 添加主机并获取新主机对象，传入搜索更新回调
-      const newHost = await addHost(groupId, ip, domain, searchUpdateCallback);
+      // 使用 StateService 添加主机
+      const success = await StateService.addHost(groupId, newHost);
 
-      if (newHost && onAdd) {
-        onAdd(newHost);
+      if (success) {
+        // 清空输入框
+        ipInput.value = '';
+        domainInput.value = '';
+
+        if (onAdd) {
+          onAdd(newHost);
+        }
+      } else {
+        Message.error('规则已存在或格式无效');
       }
-
-      ipInput.value = '';
-      domainInput.value = '';
     } else {
-      showMessage(addHostForm, 'IP地址和域名都不能为空', 'error');
+      Message.error('IP地址和域名不能为空');
     }
   });
 
@@ -300,69 +300,4 @@ export function createAddHostForm (groupId, container, onAdd) {
   formRow.appendChild(addButton);
   addHostForm.appendChild(formRow);
   container.appendChild(addHostForm);
-}
-
-/**
- * 尝试查找HostsPage实例
- * @param {HTMLElement} element - 开始查找的元素
- * @returns {Object|null} - HostsPage实例或null
- */
-function findHostsPageInstance (element) {
-  // 查找最近的.hosts-tab元素
-  let current = element;
-  while (current && !current.classList.contains('hosts-tab')) {
-    current = current.parentElement;
-  }
-
-  if (!current) return null;
-
-  // 如果找到了hosts-tab，尝试在其上查找HostsPage实例
-  // 这里为了兼容性，我们采用一个简单检测：如果元素具有performSearch方法，认为它是HostsPage实例
-  for (const key in current) {
-    if (key.startsWith('__reactProps$') && current[key] && current[key].hostsPage &&
-      typeof current[key].hostsPage.performSearch === 'function') {
-      return current[key].hostsPage;
-    }
-  }
-
-  // 在HostsPage.js中需要添加事件监听
-  const event = new CustomEvent('hostsManagerSearchUpdate', {
-    bubbles: true,
-    detail: { needsUpdate: true }
-  });
-  element.dispatchEvent(event);
-
-  return null;
-}
-
-/**
- * 添加主机
- * @param {string} groupId - 分组ID
- * @param {string} ip - IP地址
- * @param {string} domain - 域名
- * @param {Function} searchUpdateCallback - 搜索更新回调
- * @returns {Promise<Object|null>} - 新添加的主机对象或null
- */
-async function addHost (groupId, ip, domain, searchUpdateCallback = null) {
-  const newHost = {
-    id: Date.now().toString(),
-    ip,
-    domain,
-    enabled: true
-  };
-
-  const success = await StorageService.addHost(groupId, newHost);
-
-  if (success) {
-    await ProxyService.updateProxySettings();
-
-    // 如果提供了搜索更新回调，则调用它来更新搜索结果
-    if (searchUpdateCallback) {
-      searchUpdateCallback(newHost);
-    }
-
-    return newHost;
-  }
-
-  return null;
 }

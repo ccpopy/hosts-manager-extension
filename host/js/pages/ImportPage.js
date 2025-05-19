@@ -1,34 +1,27 @@
-import StorageService from '../services/StorageService.js';
-import ProxyService from '../services/ProxyService.js';
+import StateService from '../services/StateService.js';
 import { createNotice } from '../components/Notice.js';
-import { showMessage } from '../utils/MessageUtils.js';
+import { Message } from '../utils/MessageUtils.js';
 
-/**
- * 导入页面类
- */
 export default class ImportPage {
-  /**
-   * 构造函数
-   * @param {HTMLElement} container - 页面容器
-   */
   constructor(container) {
     this.container = container;
+
+    // 订阅状态变化
+    this.unsubscribe = StateService.subscribe(state => {
+      // 当分组变化时重新渲染
+      this.renderGroupSelect(state.hostsGroups);
+    });
   }
 
-  /**
-   * 初始化页面
-   */
   async init () {
+    await StateService.initialize();
     await this.render();
   }
 
-  /**
-   * 渲染页面
-   */
   async render () {
     this.container.innerHTML = '';
 
-    const hostsGroups = await StorageService.getGroups();
+    const state = StateService.getState();
 
     // 标题
     const importTitle = document.createElement('h2');
@@ -77,18 +70,13 @@ export default class ImportPage {
     groupLabel.textContent = '导入到分组:';
     importGroupSelect.appendChild(groupLabel);
 
-    const groupSelect = document.createElement('select');
-    groupSelect.id = 'import-group-select';
+    this.groupSelect = document.createElement('select');
+    this.groupSelect.id = 'import-group-select';
 
-    // 添加分组选项
-    hostsGroups.forEach(group => {
-      const option = document.createElement('option');
-      option.value = group.id;
-      option.textContent = group.name;
-      groupSelect.appendChild(option);
-    });
+    // 渲染分组选项
+    this.renderGroupSelect(state.hostsGroups);
 
-    importGroupSelect.appendChild(groupSelect);
+    importGroupSelect.appendChild(this.groupSelect);
     batchImportSection.appendChild(importGroupSelect);
 
     // 批量导入文本框
@@ -113,24 +101,24 @@ export default class ImportPage {
     importButton.textContent = '导入规则';
     importButton.addEventListener('click', async () => {
       const rules = batchTextarea.value.trim();
-      const selectedGroupId = groupSelect.value;
+      const selectedGroupId = this.groupSelect.value;
 
       if (!rules) {
-        showMessage(importActions, '请输入要导入的规则', 'error');
+        Message.error('请输入要导入的规则');
         return;
       }
 
       if (!selectedGroupId) {
-        showMessage(importActions, '请选择一个分组', 'error');
+        Message.error('请选择一个分组');
         return;
       }
 
-      const result = await ProxyService.parseAndImportRules(rules, selectedGroupId);
+      const result = await StateService.batchImportHosts(selectedGroupId, rules);
       if (result.success) {
-        showMessage(importActions, `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过`, 'success');
+        Message.success(`成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过`);
         batchTextarea.value = '';
       } else {
-        showMessage(importActions, result.message, 'error');
+        Message.error(result.message);
       }
     });
 
@@ -139,5 +127,35 @@ export default class ImportPage {
     batchImportSection.appendChild(importActions);
 
     this.container.appendChild(batchImportSection);
+  }
+
+  renderGroupSelect (groups) {
+    if (!this.groupSelect) return;
+
+    // 保存当前选中的值
+    const currentValue = this.groupSelect.value;
+
+    // 清空选项
+    this.groupSelect.innerHTML = '';
+
+    // 添加分组选项
+    groups.forEach(group => {
+      const option = document.createElement('option');
+      option.value = group.id;
+      option.textContent = group.name;
+      this.groupSelect.appendChild(option);
+    });
+
+    // 如果之前有选中的值且仍然存在，则保持选中
+    if (currentValue && groups.some(g => g.id === currentValue)) {
+      this.groupSelect.value = currentValue;
+    }
+  }
+
+  // 销毁组件时取消订阅
+  destroy () {
+    if (this.unsubscribe) {
+      this.unsubscribe();
+    }
   }
 }

@@ -2,6 +2,7 @@ import { setupMenuNavigation } from './components/MenuItem.js';
 import HostsPage from './pages/HostsPage.js';
 import ImportPage from './pages/ImportPage.js';
 import ProxyPage from './pages/ProxyPage.js';
+import StateService from './services/StateService.js';
 
 /**
  * 应用程序类
@@ -28,12 +29,18 @@ export default class App {
       import: null,
       proxy: null
     };
+
+    // 当前活跃的页面实例
+    this.activePage = null;
   }
 
   /**
    * 初始化应用程序
    */
   async init () {
+    // 初始化状态服务
+    await StateService.initialize();
+
     // 创建基础布局
     await this.createLayout();
 
@@ -150,7 +157,46 @@ export default class App {
    * 初始化当前页面
    */
   async initCurrentPage () {
-    await this.initPage(this.currentPage);
+    await this.switchPage(this.currentPage);
+  }
+
+  /**
+ * 切换到指定页面
+ * @param {string} pageName - 页面名称
+ */
+  async switchPage (pageName) {
+    // 如果当前页面是 hosts 页面，并且有搜索状态，清除搜索
+    if (this.currentPage === 'hosts' && this.pages.hosts) {
+      if (this.pages.hosts.searchKeyword) {
+        // 如果有搜索栏，清除搜索
+        if (this.pages.hosts.searchBar) {
+          this.pages.hosts.searchBar.clear();
+        }
+      }
+    }
+
+    // 如果有活跃页面，销毁它
+    if (this.activePage && typeof this.activePage.destroy === 'function') {
+      this.activePage.destroy();
+    }
+    // 确保切换页面时清除之前的页面实例
+    this.pages[this.currentPage] = null;
+
+    this.currentPage = pageName;
+    await this.initPage(pageName);
+
+    // 更新活跃页面引用
+    this.activePage = this.pages[pageName];
+
+    // 更新UI
+    const menuItems = document.querySelectorAll('.menu-item');
+    const contentEls = document.querySelectorAll('.tab-content');
+
+    menuItems.forEach(i => i.classList.remove('active'));
+    contentEls.forEach(c => c.classList.remove('active'));
+
+    document.querySelector(`.menu-item[data-tab="${pageName}"]`).classList.add('active');
+    document.querySelector(`.${pageName}-tab`).classList.add('active');
   }
 
   /**
@@ -186,8 +232,7 @@ export default class App {
 
     menuItems.forEach(item => {
       item.addEventListener('click', async () => {
-        this.currentPage = item.dataset.tab;
-        await this.initPage(this.currentPage);
+        await this.switchPage(item.dataset.tab);
       });
     });
   }

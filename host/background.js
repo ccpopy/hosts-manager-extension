@@ -106,8 +106,7 @@ function updateProxySettings () {
   });
 }
 
-// Generate PAC script for proxy configuration (ASCII only)
-// Enhanced version with port support
+// Generate PAC script for proxy configuration
 function generatePacScript (hostsMap, socketProxy) {
   // Convert the hosts map to a JSON string
   const hostsMapJson = JSON.stringify(hostsMap);
@@ -117,8 +116,13 @@ function generatePacScript (hostsMap, socketProxy) {
   const sockHost = socketProxy && socketProxy.host;
   const sockPort = socketProxy && socketProxy.port;
 
+  // Check authentication settings
+  const authEnabled = socketProxy && socketProxy.auth && socketProxy.auth.enabled;
+  const username = authEnabled ? socketProxy.auth.username : '';
+  const password = authEnabled ? socketProxy.auth.password : '';
+
   // Create PAC script with only ASCII characters
-  // Enhanced to support custom ports in URLs
+  // Enhanced to support custom ports in URLs and authentication
   let pacScript = `
   function FindProxyForURL(url, host) {
     // Extract domain and port from host
@@ -153,7 +157,11 @@ function generatePacScript (hostsMap, socketProxy) {
     }
     
     // Use SOCKS proxy for other requests if enabled
-    ${sockEnabled ? `return 'SOCKS ${sockHost}:${sockPort}';` : 'return "DIRECT";'}
+    ${sockEnabled ? (
+      authEnabled ?
+        `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :
+        `return 'SOCKS ${sockHost}:${sockPort}';`
+    ) : 'return "DIRECT";'}
   }
   `;
 

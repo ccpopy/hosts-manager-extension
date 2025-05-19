@@ -189,7 +189,9 @@ async function loadProxyStatus () {
       window.close();
     };
   } else {
-    proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}`;
+    // 显示代理状态，包含认证信息
+    const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
+    proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
     proxySwitch.checked = !!socketProxy.enabled;
     proxySwitch.disabled = false;
 
