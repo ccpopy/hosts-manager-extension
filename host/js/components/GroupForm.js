@@ -91,8 +91,10 @@ export function createAddGroupForm (onSave, onCancel) {
       enabled: true
     };
 
+    // 添加分组到存储
     await StorageService.addGroup(newGroup, enabled);
 
+    // 回调传递新添加的分组
     if (onSave) onSave(newGroup);
   });
 

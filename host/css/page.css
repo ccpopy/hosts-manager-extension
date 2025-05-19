@@ -407,7 +407,6 @@ select option {
   font-size: 14px;
   color: var(--gray-900);
   background-color: white;
-  min-height: 36px;
 }
 
 select option:hover {
@@ -676,7 +675,6 @@ input:checked + .slider:before {
   transition: all 0.2s ease;
   gap: 8px;
   background-color: var(--gray-50);
-  margin-bottom: 24px;
 }
 
 .add-group-button:hover {
@@ -810,4 +808,150 @@ input:checked + .slider:before {
 #import-group-select select {
   display: block;
   line-height: 36px;
+}
+
+/* 搜索栏相关样式 */
+.action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.search-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 300px;
+  height: 40px;
+  border-radius: var(--rounded-lg);
+  background-color: white;
+  border: 1px solid var(--gray-300);
+  padding: 0 12px;
+  transition: all 0.2s ease;
+}
+
+.search-container:hover {
+  border-color: var(--gray-400);
+}
+
+.search-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--gray-500);
+  margin-right: 12px;
+}
+
+.action-bar .search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  height: 100%;
+  font-size: 14px;
+  color: var(--gray-900);
+  outline: none;
+  padding: 0;
+}
+
+.action-bar input[type="text"]:focus,
+.action-bar input[type="number"]:focus {
+  outline: none;
+  box-shadow: inherit;
+}
+
+.clear-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--gray-500);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.2s ease;
+  margin-left: 12px;
+}
+
+.clear-button:hover {
+  color: var(--gray-700);
+}
+
+/* 搜索结果相关样式 */
+.search-results {
+  margin-top: 16px;
+  margin-bottom: 20px;
+  animation: fadeIn 0.2s ease;
+}
+
+.search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.search-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--gray-900);
+}
+
+.search-result-group-header {
+  padding: 16px 20px;
+  background-color: var(--gray-50);
+  border-radius: var(--rounded-lg) var(--rounded-lg) 0 0;
+  border: 1px solid var(--border-color);
+  transition: all 0.2s ease;
+}
+
+.search-result-group-header:hover {
+  background-color: var(--gray-100);
+  border-color: var(--gray-300);
+}
+
+.search-result-group-name {
+  font-weight: 600;
+  color: var(--gray-800);
+  font-size: 16px;
+}
+
+.search-result-hosts {
+  margin-bottom: 24px;
+  padding: 12px;
+  padding-bottom: 0;
+  border: 1px solid var(--border-color);
+  border-top: 0;
+  border-radius: 0 0 var(--rounded-lg) var(--rounded-lg);
+}
+
+.search-result-hosts .host-item {
+  margin-bottom: 12px;
+}
+
+/* 高亮样式 */
+.search-results .highlight {
+  background-color: var(--warning-light);
+  font-weight: 600;
+  color: var(--warning-dark);
+}
+
+/* 移动端响应式样式 */
+@media (max-width: 768px) {
+  .action-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .add-group-button {
+    margin-bottom: 0;
+  }
+
+  .search-container {
+    width: 100%;
+  }
 }
