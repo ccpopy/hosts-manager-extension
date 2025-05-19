@@ -115,6 +115,7 @@ hosts-manager-extension/
     ├── page.html           # 主页面
     ├── css/
     │   └── page.css        # 样式文件
+    │   └── popup.css        # 样式文件
     ├── js/
     │   ├── page.js         # 主逻辑
     │   └── popup.js        # 弹出窗口逻辑
