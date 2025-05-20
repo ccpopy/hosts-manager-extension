@@ -448,18 +448,43 @@ export default class App {
         throw new Error(`找不到页面容器: ${!currentContainer ? this.currentPage : pageName}`);
       }
 
-      // 将当前页面淡出
+      // 淡出当前页面
       currentContainer.style.opacity = '0';
 
-      // 等待淡出动画完成
-      await new Promise(resolve => setTimeout(resolve, 300));
+      // 使用Promise确保淡出动画完成
+      await new Promise(resolve => {
+        // 设置淡出动画完成回调
+        const onTransitionEnd = () => {
+          currentContainer.removeEventListener('transitionend', onTransitionEnd);
+          resolve();
+        };
+
+        // 监听动画结束事件
+        currentContainer.addEventListener('transitionend', onTransitionEnd);
+
+        // 设置超时作为备选方案（防止事件没有触发）
+        setTimeout(() => {
+          currentContainer.removeEventListener('transitionend', onTransitionEnd);
+          resolve();
+        }, 300);
+      });
 
       // 隐藏当前页面
       currentContainer.style.display = 'none';
 
       // 如果有活跃页面，销毁它
       if (this.activePage && typeof this.activePage.destroy === 'function') {
-        this.activePage.destroy();
+        try {
+          // 尝试调用destroy方法
+          await Promise.resolve(this.activePage.destroy());
+        } catch (destroyError) {
+          console.error('页面销毁时发生错误:', destroyError);
+        }
+
+        // 确保页面实例被正确标记为已销毁
+        if (this.activePage) {
+          this.activePage._destroyed = true;
+        }
       }
 
       // 更新当前页面
@@ -565,9 +590,21 @@ export default class App {
    * @returns {Promise<void>}
    */
   async initPage (pageName) {
-    // 如果页面已经初始化并且没有被销毁，直接返回
-    if (this.pages[pageName] && !this.pages[pageName]._destroyed) {
-      return;
+    // 如果页面已经初始化且没有被销毁，重新初始化它
+    if (this.pages[pageName]) {
+      if (!this.pages[pageName]._destroyed) {
+        try {
+          // 尝试调用destroy方法（如果存在）
+          if (typeof this.pages[pageName].destroy === 'function') {
+            await Promise.resolve(this.pages[pageName].destroy());
+          }
+        } catch (destroyError) {
+          console.error(`销毁页面 "${pageName}" 时发生错误:`, destroyError);
+        }
+      }
+
+      // 确保页面实例被重置
+      this.pages[pageName] = null;
     }
 
     try {

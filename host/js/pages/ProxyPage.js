@@ -1,7 +1,3 @@
-/**
- * 代理页面类
- * 管理Socket代理设置
- */
 import StateService from '../services/StateService.js';
 import { createNotice } from '../components/Notice.js';
 import { Message } from '../utils/MessageUtils.js';
@@ -13,8 +9,8 @@ export default class ProxyPage {
    */
   constructor(container) {
     this.container = container;
-    this.isSubmitting = false; // 标记是否正在提交
-    this.formElement = null; // 存储表单元素引用
+    this.isSubmitting = false;
+    this.formElement = null;
 
     // 表单元素引用
     this.elements = {
@@ -74,10 +70,8 @@ export default class ProxyPage {
     const proxyForm = this.createProxyForm(state.socketProxy);
     this.container.appendChild(proxyForm);
 
-    // 初始化表单状态 - 修复：确保初始加载时正确设置表单状态
-    setTimeout(() => {
-      this.updateFormState();
-    }, 0);
+    // 初始化表单
+    this.updateFormState();
   }
 
   /**
@@ -299,7 +293,6 @@ export default class ProxyPage {
 
   /**
    * 根据启用状态更新表单
-   * 修复：确保当Socket代理启用时，主机和端口可以编辑
    */
   updateFormState () {
     // 防止在元素不存在时调用
@@ -307,8 +300,6 @@ export default class ProxyPage {
 
     const enabled = this.elements.enabledCheckbox.checked;
 
-    // 修复：确保主机和端口输入框状态正确设置
-    // 当代理启用时，这些字段应该可编辑
     if (this.elements.hostInput) {
       this.elements.hostInput.disabled = !enabled;
       // 确保字段没有required属性，除非代理启用

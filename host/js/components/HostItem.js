@@ -138,6 +138,9 @@ function createEnabledCheckbox (groupId, host, uniqueId, onUpdate) {
         hostItem.dataset.enabled = String(enabledCheckbox.checked);
       }
 
+      // 触发自定义事件通知状态变化
+      dispatchHostModifiedEvent(host.id, groupId, 'toggled');
+
       if (onUpdate) {
         // 传递具体的操作类型
         onUpdate('toggled');
@@ -202,6 +205,9 @@ async function handleDeleteHost (groupId, hostId, hostItem, onUpdate) {
       const success = await StateService.deleteHost(groupId, hostId);
 
       if (success) {
+        // 触发自定义事件通知删除状态变化
+        dispatchHostModifiedEvent(hostId, groupId, 'deleted');
+
         // 添加动画效果
         hostItem.style.height = `${hostItem.offsetHeight}px`;
         hostItem.style.opacity = '1';
@@ -319,6 +325,9 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
       const updatedHost = await StateService.updateHost(groupId, hostId, normalized);
 
       if (updatedHost) {
+        // 触发自定义事件通知更新状态变化
+        dispatchHostModifiedEvent(hostId, groupId, 'updated');
+
         // 判断是否为搜索结果中的编辑
         const isSearchResult = editForm.dataset.isSearchResult === 'true';
 
@@ -343,7 +352,7 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
 
         // 通知上层组件主机已更新
         if (onUpdate) {
-          onUpdate(updatedHost);
+          onUpdate('updated');
         }
       } else {
         Message.error('IP和域名组合已存在，无法更新');
@@ -488,6 +497,9 @@ export function createAddHostForm (groupId, container, onAdd) {
         // 清空输入框
         ruleInput.value = '';
 
+        // 触发自定义事件通知添加状态变化
+        dispatchHostModifiedEvent(result.host.id, groupId, 'added');
+
         // 通知上层组件
         if (onAdd) {
           onAdd(result.host);
@@ -591,6 +603,9 @@ export function createAddHostForm (groupId, container, onAdd) {
       const success = await StateService.addHost(groupId, newHost);
 
       if (success) {
+        // 触发自定义事件通知添加状态变化
+        dispatchHostModifiedEvent(newHost.id, groupId, 'added');
+
         // 清空输入框
         ipInput.value = '';
         domainInput.value = '';
@@ -701,5 +716,28 @@ async function addRule (groupId, ruleText) {
       success: false,
       message: '规则已存在或格式无效'
     };
+  }
+}
+
+/**
+ * 触发主机修改事件
+ * 用于在视图之间同步状态变更
+ * @param {string} hostId - 主机ID
+ * @param {string} groupId - 分组ID
+ * @param {string} action - 操作类型 ('added'|'deleted'|'updated'|'toggled')
+ */
+function dispatchHostModifiedEvent (hostId, groupId, action) {
+  try {
+    const event = new CustomEvent('hostModified', {
+      bubbles: true,
+      detail: {
+        hostId,
+        groupId,
+        action
+      }
+    });
+    document.dispatchEvent(event);
+  } catch (error) {
+    console.error('触发主机修改事件失败:', error);
   }
 }

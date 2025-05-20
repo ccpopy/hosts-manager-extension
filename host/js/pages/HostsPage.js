@@ -1,7 +1,3 @@
-/**
- * Hosts 配置页面
- * 显示和管理hosts规则分组
- */
 import StateService from '../services/StateService.js';
 import { createNotice } from '../components/Notice.js';
 import { createGroupElement } from '../components/GroupItem.js';
@@ -33,9 +29,10 @@ export default class HostsPage {
     // 跟踪展开状态的分组
     this.expandedGroups = new Set();
 
-    // 缓存已渲染的组件
+    // 缓存已渲染的组件 - 这些将被清理以确保视图同步
     this.renderedGroups = new Map(); // groupId -> DOM元素
     this.renderedHosts = new Map();  // hostId -> DOM元素
+    this.searchResultHosts = new Map(); // 搜索结果中的主机缓存
 
     // 虚拟化列表状态
     this.virtualScroll = {
@@ -52,31 +49,130 @@ export default class HostsPage {
     // 订阅状态变化
     this.unsubscribe = StateService.subscribe(this.handleStateChange.bind(this));
 
-    // 追踪最近修改的主机，用于同步视图
-    this.recentlyModifiedHosts = new Set();
+    // 跟踪修改的主机和分组，用于同步视图
+    this.modifiedEntities = {
+      hosts: new Set(),
+      groups: new Set()
+    };
 
-    // 添加搜索清除事件监听器
+    // 添加页面级事件监听器
+    this.setupEventListeners();
+  }
+
+  /**
+   * 设置事件监听器
+   */
+  setupEventListeners () {
+    // 监听搜索清除事件
     this._searchClearedHandler = this.handleSearchCleared.bind(this);
     document.addEventListener('searchCleared', this._searchClearedHandler);
+
+    // 监听主机操作事件
+    this._hostModifiedHandler = this.handleHostModified.bind(this);
+    document.addEventListener('hostModified', this._hostModifiedHandler);
   }
 
   /**
    * 处理搜索清除事件
    */
   handleSearchCleared () {
-    // 如果有最近修改的主机，强制刷新主视图
-    if (this.recentlyModifiedHosts.size > 0) {
-      // 清除缓存的主机元素，确保重新渲染
-      this.recentlyModifiedHosts.forEach(hostId => {
-        this.renderedHosts.delete(hostId);
-      });
+    // 如果有修改过的实体，强制刷新主视图
+    if (this.modifiedEntities.hosts.size > 0 || this.modifiedEntities.groups.size > 0) {
+      // 清除所有缓存的主机和分组元素
+      this.clearElementCache();
 
       // 强制刷新主视图
       this.refreshMainView();
 
-      // 清空最近修改的主机集合
-      this.recentlyModifiedHosts.clear();
+      // 清空修改追踪
+      this.modifiedEntities.hosts.clear();
+      this.modifiedEntities.groups.clear();
     }
+  }
+
+  /**
+   * 处理主机修改事件
+   * @param {CustomEvent} event - 自定义事件
+   */
+  handleHostModified (event) {
+    if (event && event.detail) {
+      const { hostId, groupId, action } = event.detail;
+
+      if (hostId) {
+        // 记录修改的主机
+        this.modifiedEntities.hosts.add(hostId);
+
+        // 清除相关缓存
+        this.renderedHosts.delete(hostId);
+        this.searchResultHosts.delete(`search-${groupId}-${hostId}`);
+      }
+
+      if (groupId) {
+        // 记录修改的分组
+        this.modifiedEntities.groups.add(groupId);
+      }
+
+      // 如果当前在搜索模式，且主机被修改，则刷新搜索结果
+      if (this.searchKeyword && hostId) {
+        // 根据操作类型决定如何刷新
+        if (action === 'deleted') {
+          // 如果是删除操作，重新执行搜索
+          this.performSearch();
+        } else if (action === 'updated' || action === 'toggled') {
+          // 如果是更新或状态切换，更新搜索结果中的对应元素
+          this.updateSearchResultItem(groupId, hostId);
+        }
+      }
+    }
+  }
+
+  /**
+   * 更新搜索结果中的特定项
+   * @param {string} groupId - 分组ID
+   * @param {string} hostId - 主机ID
+   */
+  updateSearchResultItem (groupId, hostId) {
+    if (!this.searchKeyword || !this.searchResultsContainer) return;
+
+    try {
+      // 获取最新状态
+      const state = StateService.getState();
+      const group = state.hostsGroups.find(g => g.id === groupId);
+      if (!group) return;
+
+      const host = group.hosts.find(h => h.id === hostId);
+      if (!host) return;
+
+      // 查找搜索结果中的元素
+      const hostElement = this.searchResultsContainer.querySelector(`[data-host-id="${hostId}"][data-group-id="${groupId}"]`);
+      if (!hostElement) return;
+
+      // 创建新元素
+      const updatedElement = createHostElement(
+        groupId,
+        host,
+        this.handleHostUpdateInSearch.bind(this, groupId, hostId),
+        this.searchKeyword
+      );
+
+      // 替换元素
+      if (hostElement.parentNode) {
+        hostElement.parentNode.replaceChild(updatedElement, hostElement);
+      }
+    } catch (error) {
+      console.error('更新搜索结果项失败:', error);
+    }
+  }
+
+  /**
+   * 清除元素缓存
+   * 确保下次渲染时使用最新数据
+   */
+  clearElementCache () {
+    // 清除分组和主机的缓存
+    this.renderedGroups.clear();
+    this.renderedHosts.clear();
+    this.searchResultHosts.clear();
   }
 
   /**
@@ -86,9 +182,10 @@ export default class HostsPage {
   handleStateChange (state) {
     // 如果有活跃搜索，更新搜索结果
     if (this.searchKeyword) {
+      // 使用防抖函数延迟执行搜索
       this.performSearch();
     } else {
-      // 否则更新主视图，避免全部重新渲染
+      // 如果没有搜索关键字，更新主视图
       this.updateMainView(state);
     }
 
@@ -359,8 +456,11 @@ export default class HostsPage {
     this.groupList.innerHTML = '';
 
     groups.forEach(group => {
+      // 检查分组是否已修改，如果已修改则强制重新渲染
+      const isModified = this.modifiedEntities.groups.has(group.id);
+
       // 检查缓存中是否已有该分组的DOM元素
-      let groupItem = this.renderedGroups.get(group.id);
+      let groupItem = isModified ? null : this.renderedGroups.get(group.id);
       const isActive = state.activeGroups.includes(group.id);
 
       // 如果不存在或状态已改变，重新创建
@@ -383,6 +483,12 @@ export default class HostsPage {
         const content = groupItem.querySelector('.group-content');
         if (content) {
           content.style.display = 'block';
+
+          // 展开时检查是否需要更新主机列表
+          const hostElementsContainer = content.querySelector('.hosts-container');
+          if (hostElementsContainer && isModified) {
+            this.updateGroupHosts(group, hostElementsContainer);
+          }
         }
       }
 
@@ -391,11 +497,90 @@ export default class HostsPage {
   }
 
   /**
+   * 更新分组内的主机列表内容
+   * @param {Object} group - 分组对象
+   * @param {HTMLElement} container - 主机列表容器
+   */
+  updateGroupHosts (group, container) {
+    try {
+      // 清空容器
+      container.innerHTML = '';
+
+      // 渲染主机列表
+      if (group.hosts && group.hosts.length > 0) {
+        group.hosts.forEach(host => {
+          // 主机是否已修改
+          const isHostModified = this.modifiedEntities.hosts.has(host.id);
+
+          // 如果主机已修改，强制重新渲染
+          if (isHostModified) {
+            this.renderedHosts.delete(host.id);
+          }
+
+          // 主机更新回调
+          const hostUpdateCallback = (action) => {
+            // 触发一个自定义事件，通知主机已修改
+            const event = new CustomEvent('hostModified', {
+              bubbles: true,
+              detail: {
+                hostId: host.id,
+                groupId: group.id,
+                action: action
+              }
+            });
+            document.dispatchEvent(event);
+
+            // 处理特定操作
+            if (action === 'deleted') {
+              this.updateGroupHosts(group, container);
+            }
+          };
+
+          try {
+            const hostItem = createHostElement(group.id, host, hostUpdateCallback);
+            container.appendChild(hostItem);
+          } catch (err) {
+            console.error(`创建主机元素失败 (ID: ${host.id}):`, err);
+            // 添加错误提示元素
+            const errorItem = document.createElement('div');
+            errorItem.className = 'host-item error';
+            errorItem.textContent = `加载规则失败: ${host.ip || ''} ${host.domain || ''}`;
+            container.appendChild(errorItem);
+          }
+        });
+      } else {
+        // 空状态
+        const emptyHosts = document.createElement('div');
+        emptyHosts.className = 'empty-state';
+        emptyHosts.style.padding = '16px 0';
+        emptyHosts.style.color = 'var(--gray-500)';
+        emptyHosts.textContent = '该分组还没有hosts条目';
+        container.appendChild(emptyHosts);
+      }
+
+      // 更新主机数量标签
+      const groupElement = container.closest('.group-item');
+      if (groupElement) {
+        const hostsCountTag = groupElement.querySelector('.group-header .status-tag:nth-child(3)');
+        if (hostsCountTag) {
+          const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
+          hostsCountTag.textContent = `${hostsCount} 条规则`;
+        }
+      }
+    } catch (error) {
+      console.error('更新分组主机列表失败:', error);
+    }
+  }
+
+  /**
    * 处理分组更新
    * @param {string} groupId - 分组ID
    * @param {string} action - 更新类型
    */
-  async handleGroupUpdate (groupId, action) {
+  handleGroupUpdate (groupId, action) {
+    // 记录修改的分组
+    this.modifiedEntities.groups.add(groupId);
+
     // 移除缓存中的分组元素，下次渲染时重新创建
     this.renderedGroups.delete(groupId);
 
@@ -405,10 +590,26 @@ export default class HostsPage {
       const group = state.hostsGroups.find(g => g.id === groupId);
       if (group) {
         group.hosts.forEach(host => {
+          // 记录修改的主机
+          this.modifiedEntities.hosts.add(host.id);
+
+          // 清除缓存
           this.renderedHosts.delete(host.id);
-          // 同时从搜索结果缓存中移除
-          this.renderedHosts.delete(`search-${groupId}-${host.id}`);
+          this.searchResultHosts.delete(`search-${groupId}-${host.id}`);
         });
+      }
+
+      // 如果当前在搜索模式，刷新搜索结果
+      if (this.searchKeyword) {
+        this.performSearch();
+      }
+    }
+
+    // 如果是主机相关操作，可能需要刷新搜索结果
+    if (action === 'hostAdded' || action === 'hostUpdated') {
+      if (this.searchKeyword) {
+        // 刷新搜索结果
+        this.performSearch();
       }
     }
   }
@@ -421,6 +622,25 @@ export default class HostsPage {
   handleGroupExpandToggle (groupId, isExpanded) {
     if (isExpanded) {
       this.expandedGroups.add(groupId);
+
+      // 如果分组或其中的主机有修改，需要更新主机列表
+      if (this.modifiedEntities.groups.has(groupId)) {
+        const groupItem = this.renderedGroups.get(groupId);
+        if (groupItem) {
+          const content = groupItem.querySelector('.group-content');
+          const hostsContainer = content.querySelector('.hosts-container');
+
+          if (hostsContainer) {
+            // 获取最新的分组数据
+            const state = StateService.getState();
+            const group = state.hostsGroups.find(g => g.id === groupId);
+
+            if (group) {
+              this.updateGroupHosts(group, hostsContainer);
+            }
+          }
+        }
+      }
     } else {
       this.expandedGroups.delete(groupId);
     }
@@ -591,12 +811,17 @@ export default class HostsPage {
 
       // 遍历并显示所有匹配的主机
       group.hosts.forEach(host => {
-        // 使用缓存提高性能
-        let hostItem = this.renderedHosts.get(`search-${group.id}-${host.id}`);
+        const cacheKey = `search-${group.id}-${host.id}`;
+
+        // 检查主机是否已修改
+        const isHostModified = this.modifiedEntities.hosts.has(host.id);
+
+        // 使用缓存提高性能，但如果主机已修改则强制重新渲染
+        let hostItem = isHostModified ? null : this.searchResultHosts.get(cacheKey);
 
         if (!hostItem) {
           // 创建更新回调
-          const hostUpdateCallback = this.handleHostUpdateInSearch.bind(this, group.id, host.id);
+          const hostUpdateCallback = (action) => this.handleHostUpdateInSearch(group.id, host.id, action);
 
           // 创建主机项并设置回调
           hostItem = createHostElement(
@@ -606,8 +831,11 @@ export default class HostsPage {
             this.searchKeyword
           );
 
+          // 将搜索视图中的元素标记为搜索结果
+          hostItem.dataset.isSearchResult = 'true';
+
           // 缓存搜索结果中的主机元素
-          this.renderedHosts.set(`search-${group.id}-${host.id}`, hostItem);
+          this.searchResultHosts.set(cacheKey, hostItem);
         }
 
         hostsList.appendChild(hostItem);
@@ -624,27 +852,27 @@ export default class HostsPage {
    * 处理搜索结果中的主机更新
    * @param {string} groupId - 分组ID
    * @param {string} hostId - 主机ID
-   * @param {string|object} actionOrUpdatedHost - 操作类型或更新后的主机对象
+   * @param {string} action - 操作类型
    */
-  handleHostUpdateInSearch (groupId, hostId, actionOrUpdatedHost) {
-    // 移除缓存的搜索结果中的主机元素
-    this.renderedHosts.delete(`search-${groupId}-${hostId}`);
+  handleHostUpdateInSearch (groupId, hostId, action) {
+    // 触发一个自定义事件，通知主机已修改
+    const event = new CustomEvent('hostModified', {
+      bubbles: true,
+      detail: {
+        hostId: hostId,
+        groupId: groupId,
+        action: action
+      }
+    });
+    document.dispatchEvent(event);
 
-    // 同时移除主视图中的缓存，强制下次重新渲染
-    this.renderedHosts.delete(hostId);
-
-    // 记录主机已被修改，用于在搜索清除时同步视图
-    this.recentlyModifiedHosts.add(hostId);
-
-    // 根据操作类型处理
-    if (actionOrUpdatedHost === 'deleted') {
+    // 根据操作类型处理搜索结果
+    if (action === 'deleted') {
       // 如果主机被删除，重新执行搜索
       this.performSearch();
-    } else if (actionOrUpdatedHost === 'toggled') {
-      // 如果主机状态被切换，现在不需特殊处理，因为在搜索清除时会强制刷新
-    } else if (typeof actionOrUpdatedHost === 'object') {
-      // 如果主机被编辑，重新执行搜索以更新显示
-      this.performSearch();
+    } else if (action === 'toggled' || action === 'updated') {
+      // 更新搜索结果中的对应元素
+      this.updateSearchResultItem(groupId, hostId);
     }
   }
 
@@ -687,8 +915,14 @@ export default class HostsPage {
       return true;
     }
 
-    // 如果有最近修改的主机，需要重新渲染
-    if (this.recentlyModifiedHosts.size > 0) return true;
+    // 如果有修改的实体，需要检查是否需要完全重新渲染
+    if (this.modifiedEntities.groups.size > 0) {
+      // 如果修改的分组数量超过一定比例，完全重新渲染更高效
+      const modifiedRatio = this.modifiedEntities.groups.size / state.hostsGroups.length;
+      if (modifiedRatio > 0.3) { // 如果超过30%的分组被修改，完全重新渲染
+        return true;
+      }
+    }
 
     return false;
   }
@@ -699,13 +933,14 @@ export default class HostsPage {
    */
   updateChangedGroups (state) {
     try {
-      // 获取激活状态变化的分组
+      // 获取激活状态变化的分组和被修改的分组
       state.hostsGroups.forEach(group => {
         const isActive = state.activeGroups.includes(group.id);
         const groupElement = this.renderedGroups.get(group.id);
+        const isModified = this.modifiedEntities.groups.has(group.id);
 
-        if (groupElement && groupElement.dataset.active !== String(isActive)) {
-          // 如果分组状态已改变，更新元素
+        // 如果分组状态已改变或已被修改，更新元素
+        if ((groupElement && groupElement.dataset.active !== String(isActive)) || isModified) {
           const newGroupElement = createGroupElement(
             group,
             isActive,
@@ -722,22 +957,34 @@ export default class HostsPage {
           }
 
           // 替换元素
-          if (groupElement.parentNode) {
+          if (groupElement && groupElement.parentNode) {
             groupElement.parentNode.replaceChild(newGroupElement, groupElement);
           }
 
           // 更新缓存
           this.renderedGroups.set(group.id, newGroupElement);
+
+          // 从修改列表中移除
+          this.modifiedEntities.groups.delete(group.id);
         }
 
-        // 检查是否有最近修改的主机，需更新对应的分组内容
-        if (this.recentlyModifiedHosts.size > 0) {
-          const groupHosts = group.hosts || [];
-          const modifiedHostsInGroup = groupHosts.filter(h => this.recentlyModifiedHosts.has(h.id));
+        // 检查是否有被修改的主机需要更新
+        const modifiedHostsInGroup = group.hosts.filter(h => this.modifiedEntities.hosts.has(h.id));
+        if (modifiedHostsInGroup.length > 0 && groupElement) {
+          // 如果有修改的主机且分组是展开的，更新主机列表
+          if (this.expandedGroups.has(group.id)) {
+            const content = groupElement.querySelector('.group-content');
+            if (content) {
+              const hostsContainer = content.querySelector('.hosts-container');
+              if (hostsContainer) {
+                this.updateGroupHosts(group, hostsContainer);
 
-          if (modifiedHostsInGroup.length > 0) {
-            // 如果有修改的主机属于当前分组，更新该分组
-            this.updateGroupHosts(group.id);
+                // 清除已处理的主机修改记录
+                modifiedHostsInGroup.forEach(host => {
+                  this.modifiedEntities.hosts.delete(host.id);
+                });
+              }
+            }
           }
         }
       });
@@ -749,100 +996,21 @@ export default class HostsPage {
   }
 
   /**
-   * 更新分组内的主机列表
-   * 新增方法：用于刷新特定分组内的主机列表
-   * @param {string} groupId - 分组ID
-   */
-  updateGroupHosts (groupId) {
-    try {
-      const state = StateService.getState();
-      const group = state.hostsGroups.find(g => g.id === groupId);
-      if (!group) return;
-
-      // 查找分组元素
-      const groupElement = this.renderedGroups.get(groupId);
-      if (!groupElement) return;
-
-      // 查找主机容器
-      const hostsContainer = groupElement.querySelector('.hosts-container');
-      if (!hostsContainer) return;
-
-      // 清空主机容器
-      hostsContainer.innerHTML = '';
-
-      // 重新渲染所有主机
-      if (group.hosts && group.hosts.length > 0) {
-        group.hosts.forEach(host => {
-          // 删除缓存，确保重新渲染
-          this.renderedHosts.delete(host.id);
-
-          const hostUpdateCallback = async (actionOrUpdatedHost) => {
-            try {
-              if (actionOrUpdatedHost === 'deleted') {
-                await this.updateGroupHosts(groupId);
-              }
-
-              // 通知状态更新
-              this.handleGroupUpdate(groupId, 'hostUpdated');
-            } catch (error) {
-              console.error('处理主机更新回调失败:', error);
-            }
-          };
-
-          try {
-            const hostItem = createHostElement(groupId, host, hostUpdateCallback);
-            hostsContainer.appendChild(hostItem);
-          } catch (hostError) {
-            console.error(`创建主机元素失败 (ID: ${host.id}):`, hostError);
-            // 添加一个错误占位元素
-            const errorItem = document.createElement('div');
-            errorItem.className = 'host-item error';
-            errorItem.textContent = `加载规则失败: ${host.ip || ''} ${host.domain || ''}`;
-            hostsContainer.appendChild(errorItem);
-          }
-        });
-      } else {
-        // 空状态
-        const emptyHosts = document.createElement('div');
-        emptyHosts.className = 'empty-state';
-        emptyHosts.style.padding = '16px 0';
-        emptyHosts.style.color = 'var(--gray-500)';
-        emptyHosts.textContent = '该分组还没有hosts条目';
-        hostsContainer.appendChild(emptyHosts);
-      }
-
-      // 更新主机数量标签
-      const hostsCountTag = groupElement.querySelector('.group-header .status-tag:nth-child(3)');
-      if (hostsCountTag) {
-        const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
-        hostsCountTag.textContent = `${hostsCount} 条规则`;
-      }
-    } catch (error) {
-      console.error('更新分组主机列表失败:', error);
-    }
-  }
-
-  /**
    * 刷新主视图
    */
   refreshMainView () {
     try {
-      // 如果有最近修改的主机，确保缓存被清除
-      if (this.recentlyModifiedHosts.size > 0) {
-        this.recentlyModifiedHosts.forEach(hostId => {
-          this.renderedHosts.delete(hostId);
-        });
-        // 清空最近修改的主机集合
-        this.recentlyModifiedHosts.clear();
-      }
-
       // 清空分组列表但保留展开状态
       if (this.groupListContainer) {
         this.groupListContainer.innerHTML = '';
       }
 
-      // 清空缓存的分组元素，确保重新渲染
-      this.renderedGroups.clear();
+      // 清空缓存的元素，确保重新渲染
+      this.clearElementCache();
+
+      // 清空修改追踪
+      this.modifiedEntities.hosts.clear();
+      this.modifiedEntities.groups.clear();
 
       // 重新渲染分组列表
       this.renderGroupList();
@@ -870,16 +1038,21 @@ export default class HostsPage {
         window.removeEventListener('resize', this.handleResize);
       }
 
-      // 移除搜索清除事件监听器
+      // 移除自定义事件监听器
       if (this._searchClearedHandler) {
         document.removeEventListener('searchCleared', this._searchClearedHandler);
         this._searchClearedHandler = null;
       }
 
+      if (this._hostModifiedHandler) {
+        document.removeEventListener('hostModified', this._hostModifiedHandler);
+        this._hostModifiedHandler = null;
+      }
+
       // 清空缓存
-      this.renderedGroups.clear();
-      this.renderedHosts.clear();
-      this.recentlyModifiedHosts.clear();
+      this.clearElementCache();
+      this.modifiedEntities.hosts.clear();
+      this.modifiedEntities.groups.clear();
       this.expandedGroups.clear();
 
       // 清空视图
