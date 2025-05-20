@@ -118,7 +118,7 @@ function createMessageElement (content, type, duration) {
   // 添加消息文本
   const text = document.createElement('span');
 
-  // 检查是否为对象或数组（格式化后的JSON字符串）
+  // 检查是否为对象或数组
   if (
     (typeof content === 'object' && content !== null) ||
     Array.isArray(content)

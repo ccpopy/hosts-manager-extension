@@ -1,4 +1,3 @@
-// js/pages/HostsPage.js
 import StateService from '../services/StateService.js';
 import { createNotice } from '../components/Notice.js';
 import { createGroupElement } from '../components/GroupItem.js';
@@ -97,7 +96,7 @@ export default class HostsPage {
       this.performSearch();
     });
 
-    // 将搜索栏包装在一个容器中，以保持布局的一致性
+    // 搜索栏容器
     const searchBarWrapper = document.createElement('div');
     searchBarWrapper.style.display = 'flex';
     searchBarWrapper.style.alignItems = 'center';
@@ -256,7 +255,7 @@ export default class HostsPage {
     const searchTitle = document.createElement('h3');
     searchTitle.className = 'search-title';
 
-    // 使用与应用一致的状态标签样式
+    // 状态标签
     let statusClass = 'status-tag';
     if (searchResult.totalMatches > 0) {
       statusClass += ' status-tag-success';
