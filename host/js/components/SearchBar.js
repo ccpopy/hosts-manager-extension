@@ -10,6 +10,7 @@ export default class SearchBar {
   constructor(onSearch) {
     this.onSearch = onSearch;
     this.element = this.createSearchBar();
+    this.currentKeyword = ''; // 添加属性跟踪当前关键字
   }
 
   /**
@@ -48,6 +49,7 @@ export default class SearchBar {
     // 添加事件监听
     searchInput.addEventListener('input', () => {
       const keyword = searchInput.value.trim();
+      this.currentKeyword = keyword; // 更新当前关键字
       clearButton.style.display = keyword ? 'flex' : 'none';
       this.onSearch(keyword);
     });
@@ -61,11 +63,20 @@ export default class SearchBar {
       searchContainer.classList.remove('focused');
     });
 
-    clearButton.addEventListener('click', () => {
+    clearButton.addEventListener('click', (e) => {
       searchInput.value = '';
       clearButton.style.display = 'none';
       searchInput.focus();
-      this.onSearch('');
+      this.clearSearch(); // 使用新的清除方法
+    });
+
+    // 监听按下 Escape 键
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.currentKeyword) {
+        searchInput.value = '';
+        clearButton.style.display = 'none';
+        this.clearSearch(); // 使用新的清除方法
+      }
     });
 
     // 组装搜索栏
@@ -85,12 +96,65 @@ export default class SearchBar {
   }
 
   /**
+   * 清空搜索栏并触发自定义事件
+   */
+  clearSearch () {
+    const hadKeyword = !!this.currentKeyword;
+    this.currentKeyword = '';
+
+    // 触发搜索回调，传递空字符串表示清除搜索
+    this.onSearch('');
+
+    // 仅当之前有关键字时才触发事件
+    if (hadKeyword) {
+      this.dispatchClearEvent();
+    }
+  }
+
+  /**
+   * 触发搜索清除事件
+   * 新增方法：独立触发事件，确保事件总是被触发
+   */
+  dispatchClearEvent () {
+    try {
+      // 触发一个自定义事件，通知需要刷新主视图
+      const event = new CustomEvent('searchCleared', {
+        bubbles: true,
+        cancelable: true,
+        detail: { time: new Date() }
+      });
+
+      // 确保事件能正确冒泡到文档
+      if (this.element) {
+        const dispatched = this.element.dispatchEvent(event);
+
+        // 如果事件没有被成功分发，尝试在文档级别分发
+        if (!dispatched) {
+          document.dispatchEvent(event);
+        }
+      } else {
+        // 如果元素不存在，直接在文档级别分发事件
+        document.dispatchEvent(event);
+      }
+    } catch (error) {
+      console.error('触发搜索清除事件失败:', error);
+      // 尝试使用更简单的方式
+      try {
+        document.dispatchEvent(new Event('searchCleared'));
+      } catch (e) {
+        console.error('备用搜索清除事件触发也失败:', e);
+      }
+    }
+  }
+
+  /**
    * 清空搜索栏
    */
   clear () {
     const searchInput = this.element.querySelector('.search-input');
     const clearButton = this.element.querySelector('.clear-button');
 
+    // 检查元素是否存在
     if (searchInput) {
       searchInput.value = '';
     }
@@ -99,14 +163,8 @@ export default class SearchBar {
       clearButton.style.display = 'none';
     }
 
-    // 触发搜索回调，传递空字符串表示清除搜索
-    this.onSearch('');
-
-    // 触发一个自定义事件，通知需要刷新主视图
-    const event = new CustomEvent('searchCleared', {
-      bubbles: true
-    });
-    this.element.dispatchEvent(event);
+    // 使用新的清除搜索方法
+    this.clearSearch();
   }
 
   /**
@@ -116,6 +174,9 @@ export default class SearchBar {
   setKeyword (keyword) {
     const searchInput = this.element.querySelector('.search-input');
     const clearButton = this.element.querySelector('.clear-button');
+
+    // 更新当前关键字
+    this.currentKeyword = keyword;
 
     if (searchInput) {
       searchInput.value = keyword;

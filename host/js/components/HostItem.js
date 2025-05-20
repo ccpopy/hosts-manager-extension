@@ -24,6 +24,15 @@ let hostItemCounter = 0;
  * @returns {HTMLElement} - 主机DOM元素
  */
 export function createHostElement (groupId, host, onUpdate = null, searchKeyword = '') {
+  if (!host || !host.id) {
+    console.error('创建主机元素失败：主机对象无效', host);
+    // 创建一个错误提示元素代替
+    const errorEl = document.createElement('div');
+    errorEl.className = 'host-item error';
+    errorEl.textContent = '无效的主机规则';
+    return errorEl;
+  }
+
   // 生成唯一ID
   const uniqueId = `host-item-${++hostItemCounter}`;
 
@@ -32,56 +41,70 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
   hostItem.id = uniqueId;
   hostItem.dataset.hostId = host.id;
   hostItem.dataset.groupId = groupId;
+  // 添加额外标记是否为搜索结果中的元素
+  hostItem.dataset.isSearchResult = !!searchKeyword;
 
-  // 添加启用/禁用复选框
-  const enabledCheckbox = createEnabledCheckbox(groupId, host, uniqueId, onUpdate);
-  hostItem.appendChild(enabledCheckbox);
+  try {
+    // 添加启用/禁用复选框
+    const enabledCheckbox = createEnabledCheckbox(groupId, host, uniqueId, onUpdate);
+    hostItem.appendChild(enabledCheckbox);
 
-  // IP地址显示
-  const ipSpan = document.createElement('span');
-  ipSpan.className = 'host-ip';
+    // IP地址显示
+    const ipSpan = document.createElement('span');
+    ipSpan.className = 'host-ip';
 
-  // 如果有搜索关键字，则高亮显示
-  if (searchKeyword) {
-    ipSpan.innerHTML = SearchService.highlightText(host.ip, searchKeyword);
-  } else {
-    ipSpan.textContent = host.ip;
+    // 如果有搜索关键字，则高亮显示
+    if (searchKeyword) {
+      ipSpan.innerHTML = SearchService.highlightText(host.ip, searchKeyword);
+    } else {
+      ipSpan.textContent = host.ip;
+    }
+    hostItem.appendChild(ipSpan);
+
+    // 域名显示
+    const domainSpan = document.createElement('span');
+    domainSpan.className = 'host-domain';
+
+    // 如果有搜索关键字，则高亮显示
+    if (searchKeyword) {
+      domainSpan.innerHTML = SearchService.highlightText(host.domain, searchKeyword);
+    } else {
+      domainSpan.textContent = host.domain;
+    }
+    hostItem.appendChild(domainSpan);
+
+    // 操作按钮容器
+    const actionContainer = document.createElement('div');
+    actionContainer.className = 'host-actions';
+    actionContainer.style.display = 'flex';
+    actionContainer.style.gap = '8px';
+
+    // 编辑按钮
+    const editButton = createButton('编辑', 'button-default', () => {
+      createHostEditForm(groupId, host.id, host.ip, host.domain, hostItem, onUpdate);
+    });
+    actionContainer.appendChild(editButton);
+
+    // 删除按钮
+    const deleteButton = createButton('删除', 'button-danger', async () => {
+      await handleDeleteHost(groupId, host.id, hostItem, onUpdate);
+    });
+    actionContainer.appendChild(deleteButton);
+
+    hostItem.appendChild(actionContainer);
+
+    // 添加状态标记，用于识别启用/禁用状态
+    hostItem.dataset.enabled = String(!!host.enabled);
+
+    return hostItem;
+  } catch (error) {
+    console.error('创建主机元素时发生错误:', error);
+    // 创建一个错误提示元素代替
+    const errorEl = document.createElement('div');
+    errorEl.className = 'host-item error';
+    errorEl.textContent = '加载规则失败';
+    return errorEl;
   }
-  hostItem.appendChild(ipSpan);
-
-  // 域名显示
-  const domainSpan = document.createElement('span');
-  domainSpan.className = 'host-domain';
-
-  // 如果有搜索关键字，则高亮显示
-  if (searchKeyword) {
-    domainSpan.innerHTML = SearchService.highlightText(host.domain, searchKeyword);
-  } else {
-    domainSpan.textContent = host.domain;
-  }
-  hostItem.appendChild(domainSpan);
-
-  // 操作按钮容器
-  const actionContainer = document.createElement('div');
-  actionContainer.className = 'host-actions';
-  actionContainer.style.display = 'flex';
-  actionContainer.style.gap = '8px';
-
-  // 编辑按钮
-  const editButton = createButton('编辑', 'button-default', () => {
-    createHostEditForm(groupId, host.id, host.ip, host.domain, hostItem, onUpdate);
-  });
-  actionContainer.appendChild(editButton);
-
-  // 删除按钮
-  const deleteButton = createButton('删除', 'button-danger', async () => {
-    await handleDeleteHost(groupId, host.id, hostItem, onUpdate);
-  });
-  actionContainer.appendChild(deleteButton);
-
-  hostItem.appendChild(actionContainer);
-
-  return hostItem;
 }
 
 /**
@@ -102,13 +125,21 @@ function createEnabledCheckbox (groupId, host, uniqueId, onUpdate) {
   enabledCheckbox.type = 'checkbox';
   enabledCheckbox.id = checkboxId;
   enabledCheckbox.className = 'host-enabled';
-  enabledCheckbox.checked = host.enabled;
+  enabledCheckbox.checked = !!host.enabled; // 确保布尔值
 
   // 使用防抖函数包装切换事件
   const handleToggle = debounce(async () => {
     try {
       await StateService.toggleHost(groupId, host.id, enabledCheckbox.checked);
+
+      // 同步更新DOM
+      const hostItem = checkboxContainer.closest('.host-item');
+      if (hostItem) {
+        hostItem.dataset.enabled = String(enabledCheckbox.checked);
+      }
+
       if (onUpdate) {
+        // 传递具体的操作类型
         onUpdate('toggled');
       }
     } catch (error) {
@@ -221,6 +252,9 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   // 创建编辑表单容器
   const editForm = document.createElement('div');
   editForm.className = 'host-edit-form';
+  editForm.dataset.groupId = groupId;
+  editForm.dataset.hostId = hostId;
+  editForm.dataset.isSearchResult = hostItem.dataset.isSearchResult;
 
   // IP输入框
   const ipInput = document.createElement('input');
@@ -243,16 +277,12 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   ipContainer.style.display = 'flex';
   ipContainer.style.alignItems = 'center';
   ipContainer.appendChild(ipInput);
-  // 移除对验证指示器的添加
-  // ipContainer.appendChild(ipValidIndicator);
 
   // 域名输入容器
   const domainContainer = document.createElement('div');
   domainContainer.style.display = 'flex';
   domainContainer.style.alignItems = 'center';
   domainContainer.appendChild(domainInput);
-  // 移除对验证指示器的添加
-  // domainContainer.appendChild(domainValidIndicator);
 
   // 保存按钮
   const saveButton = createButton('保存', 'button-primary', async () => {
@@ -289,8 +319,18 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
       const updatedHost = await StateService.updateHost(groupId, hostId, normalized);
 
       if (updatedHost) {
-        // 创建更新后的主机元素并替换编辑表单
-        const newHostItem = createHostElement(groupId, updatedHost, onUpdate);
+        // 判断是否为搜索结果中的编辑
+        const isSearchResult = editForm.dataset.isSearchResult === 'true';
+
+        // 创建更新后的主机元素
+        const newHostItem = createHostElement(
+          groupId,
+          updatedHost,
+          onUpdate,
+          isSearchResult ? editForm.dataset.searchKeyword : '' // 保留搜索关键字高亮
+        );
+
+        // 替换编辑表单
         if (editForm.parentNode) {
           editForm.parentNode.replaceChild(newHostItem, editForm);
         }
@@ -324,8 +364,18 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
       if (group) {
         const host = group.hosts.find(h => h.id === hostId);
         if (host) {
-          // 创建原始主机元素并替换编辑表单
-          const originalHostItem = createHostElement(groupId, host, onUpdate);
+          // 判断是否为搜索结果中的编辑
+          const isSearchResult = editForm.dataset.isSearchResult === 'true';
+
+          // 创建原始主机元素
+          const originalHostItem = createHostElement(
+            groupId,
+            host,
+            onUpdate,
+            isSearchResult ? editForm.dataset.searchKeyword : '' // 保留搜索关键字高亮
+          );
+
+          // 替换编辑表单
           if (editForm.parentNode) {
             editForm.parentNode.replaceChild(originalHostItem, editForm);
           }
@@ -337,12 +387,19 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
 
       // 回退方案 - 尝试直接替换为原始元素
       try {
+        // 判断是否为搜索结果中的编辑
+        const isSearchResult = editForm.dataset.isSearchResult === 'true';
+
         const originalHostItem = createHostElement(
           groupId,
           { id: hostId, ip: currentIp, domain: currentDomain, enabled: true },
-          onUpdate
+          onUpdate,
+          isSearchResult ? editForm.dataset.searchKeyword : '' // 保留搜索关键字高亮
         );
-        editForm.parentNode.replaceChild(originalHostItem, editForm);
+
+        if (editForm.parentNode) {
+          editForm.parentNode.replaceChild(originalHostItem, editForm);
+        }
       } catch (e) {
         console.error('回退方案失败:', e);
       }
@@ -354,6 +411,26 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   editForm.appendChild(domainContainer);
   editForm.appendChild(saveButton);
   editForm.appendChild(cancelButton);
+
+  // 保存搜索关键字，用于取消时恢复高亮
+  if (hostItem.dataset.isSearchResult === 'true') {
+    // 尝试从当前元素获取搜索关键字
+    const ipSpan = hostItem.querySelector('.host-ip');
+    const domainSpan = hostItem.querySelector('.host-domain');
+
+    if (ipSpan && ipSpan.innerHTML.includes('highlight') &&
+      domainSpan && domainSpan.innerHTML.includes('highlight')) {
+      // 尝试提取搜索关键字
+      try {
+        const highlightMatch = ipSpan.innerHTML.match(/<span class="highlight">(.+?)<\/span>/);
+        if (highlightMatch && highlightMatch[1]) {
+          editForm.dataset.searchKeyword = highlightMatch[1];
+        }
+      } catch (error) {
+        // 忽略提取错误
+      }
+    }
+  }
 
   // 替换DOM中的主机元素为编辑表单
   if (hostItem.parentNode) {
@@ -517,15 +594,6 @@ export function createAddHostForm (groupId, container, onAdd) {
         // 清空输入框
         ipInput.value = '';
         domainInput.value = '';
-
-        // 移除验证指示器代码
-        // 原代码删除开始
-        /*
-        // 重置验证指示器
-        ipValidIndicator.style.backgroundColor = '#d1d5db';
-        domainValidIndicator.style.backgroundColor = '#d1d5db';
-        */
-        // 原代码删除结束
 
         if (onAdd) {
           onAdd(newHost);

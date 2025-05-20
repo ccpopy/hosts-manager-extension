@@ -51,6 +51,32 @@ export default class HostsPage {
 
     // 订阅状态变化
     this.unsubscribe = StateService.subscribe(this.handleStateChange.bind(this));
+
+    // 追踪最近修改的主机，用于同步视图
+    this.recentlyModifiedHosts = new Set();
+
+    // 添加搜索清除事件监听器
+    this._searchClearedHandler = this.handleSearchCleared.bind(this);
+    document.addEventListener('searchCleared', this._searchClearedHandler);
+  }
+
+  /**
+   * 处理搜索清除事件
+   */
+  handleSearchCleared () {
+    // 如果有最近修改的主机，强制刷新主视图
+    if (this.recentlyModifiedHosts.size > 0) {
+      // 清除缓存的主机元素，确保重新渲染
+      this.recentlyModifiedHosts.forEach(hostId => {
+        this.renderedHosts.delete(hostId);
+      });
+
+      // 强制刷新主视图
+      this.refreshMainView();
+
+      // 清空最近修改的主机集合
+      this.recentlyModifiedHosts.clear();
+    }
   }
 
   /**
@@ -160,33 +186,6 @@ export default class HostsPage {
     });
 
     actionBar.appendChild(addGroupButton);
-
-    // 移除批量操作按钮容器和对应的按钮
-    // 原代码删除开始
-    /*
-    // 批量操作按钮容器
-    const batchActionsContainer = document.createElement('div');
-    batchActionsContainer.className = 'batch-actions';
-    batchActionsContainer.style.display = 'flex';
-    batchActionsContainer.style.gap = '8px';
-
-    // 启用所有分组按钮
-    const enableAllButton = document.createElement('button');
-    enableAllButton.className = 'button button-default button-small';
-    enableAllButton.textContent = '启用所有分组';
-    enableAllButton.addEventListener('click', this.handleEnableAllGroups.bind(this));
-    batchActionsContainer.appendChild(enableAllButton);
-
-    // 禁用所有分组按钮
-    const disableAllButton = document.createElement('button');
-    disableAllButton.className = 'button button-default button-small';
-    disableAllButton.textContent = '禁用所有分组';
-    disableAllButton.addEventListener('click', this.handleDisableAllGroups.bind(this));
-    batchActionsContainer.appendChild(disableAllButton);
-
-    actionBar.appendChild(batchActionsContainer);
-    */
-    // 原代码删除结束
 
     // 添加搜索栏
     this.searchBar = new SearchBar(keyword => {
@@ -407,6 +406,8 @@ export default class HostsPage {
       if (group) {
         group.hosts.forEach(host => {
           this.renderedHosts.delete(host.id);
+          // 同时从搜索结果缓存中移除
+          this.renderedHosts.delete(`search-${groupId}-${host.id}`);
         });
       }
     }
@@ -626,18 +627,21 @@ export default class HostsPage {
    * @param {string|object} actionOrUpdatedHost - 操作类型或更新后的主机对象
    */
   handleHostUpdateInSearch (groupId, hostId, actionOrUpdatedHost) {
-    // 移除缓存的主机元素
+    // 移除缓存的搜索结果中的主机元素
     this.renderedHosts.delete(`search-${groupId}-${hostId}`);
 
-    // 同时移除主视图中的缓存
+    // 同时移除主视图中的缓存，强制下次重新渲染
     this.renderedHosts.delete(hostId);
+
+    // 记录主机已被修改，用于在搜索清除时同步视图
+    this.recentlyModifiedHosts.add(hostId);
 
     // 根据操作类型处理
     if (actionOrUpdatedHost === 'deleted') {
       // 如果主机被删除，重新执行搜索
       this.performSearch();
     } else if (actionOrUpdatedHost === 'toggled') {
-      // 如果主机状态被切换，不需特殊处理，因为复选框已更新
+      // 如果主机状态被切换，现在不需特殊处理，因为在搜索清除时会强制刷新
     } else if (typeof actionOrUpdatedHost === 'object') {
       // 如果主机被编辑，重新执行搜索以更新显示
       this.performSearch();
@@ -683,6 +687,9 @@ export default class HostsPage {
       return true;
     }
 
+    // 如果有最近修改的主机，需要重新渲染
+    if (this.recentlyModifiedHosts.size > 0) return true;
+
     return false;
   }
 
@@ -691,69 +698,203 @@ export default class HostsPage {
    * @param {object} state - 应用状态
    */
   updateChangedGroups (state) {
-    // 获取激活状态变化的分组
-    state.hostsGroups.forEach(group => {
-      const isActive = state.activeGroups.includes(group.id);
-      const groupElement = this.renderedGroups.get(group.id);
+    try {
+      // 获取激活状态变化的分组
+      state.hostsGroups.forEach(group => {
+        const isActive = state.activeGroups.includes(group.id);
+        const groupElement = this.renderedGroups.get(group.id);
 
-      if (groupElement && groupElement.dataset.active !== String(isActive)) {
-        // 如果分组状态已改变，更新元素
-        const newGroupElement = createGroupElement(
-          group,
-          isActive,
-          this.handleGroupUpdate.bind(this),
-          this.handleGroupExpandToggle.bind(this)
-        );
+        if (groupElement && groupElement.dataset.active !== String(isActive)) {
+          // 如果分组状态已改变，更新元素
+          const newGroupElement = createGroupElement(
+            group,
+            isActive,
+            this.handleGroupUpdate.bind(this),
+            this.handleGroupExpandToggle.bind(this)
+          );
 
-        // 保存展开状态
-        if (this.expandedGroups.has(group.id)) {
-          const content = newGroupElement.querySelector('.group-content');
-          if (content) {
-            content.style.display = 'block';
+          // 保存展开状态
+          if (this.expandedGroups.has(group.id)) {
+            const content = newGroupElement.querySelector('.group-content');
+            if (content) {
+              content.style.display = 'block';
+            }
+          }
+
+          // 替换元素
+          if (groupElement.parentNode) {
+            groupElement.parentNode.replaceChild(newGroupElement, groupElement);
+          }
+
+          // 更新缓存
+          this.renderedGroups.set(group.id, newGroupElement);
+        }
+
+        // 检查是否有最近修改的主机，需更新对应的分组内容
+        if (this.recentlyModifiedHosts.size > 0) {
+          const groupHosts = group.hosts || [];
+          const modifiedHostsInGroup = groupHosts.filter(h => this.recentlyModifiedHosts.has(h.id));
+
+          if (modifiedHostsInGroup.length > 0) {
+            // 如果有修改的主机属于当前分组，更新该分组
+            this.updateGroupHosts(group.id);
           }
         }
+      });
+    } catch (error) {
+      console.error('更新分组视图时出错:', error);
+      // 发生错误时尝试完全刷新
+      this.refreshMainView();
+    }
+  }
 
-        // 替换元素
-        if (groupElement.parentNode) {
-          groupElement.parentNode.replaceChild(newGroupElement, groupElement);
-        }
+  /**
+   * 更新分组内的主机列表
+   * 新增方法：用于刷新特定分组内的主机列表
+   * @param {string} groupId - 分组ID
+   */
+  updateGroupHosts (groupId) {
+    try {
+      const state = StateService.getState();
+      const group = state.hostsGroups.find(g => g.id === groupId);
+      if (!group) return;
 
-        // 更新缓存
-        this.renderedGroups.set(group.id, newGroupElement);
+      // 查找分组元素
+      const groupElement = this.renderedGroups.get(groupId);
+      if (!groupElement) return;
+
+      // 查找主机容器
+      const hostsContainer = groupElement.querySelector('.hosts-container');
+      if (!hostsContainer) return;
+
+      // 清空主机容器
+      hostsContainer.innerHTML = '';
+
+      // 重新渲染所有主机
+      if (group.hosts && group.hosts.length > 0) {
+        group.hosts.forEach(host => {
+          // 删除缓存，确保重新渲染
+          this.renderedHosts.delete(host.id);
+
+          const hostUpdateCallback = async (actionOrUpdatedHost) => {
+            try {
+              if (actionOrUpdatedHost === 'deleted') {
+                await this.updateGroupHosts(groupId);
+              }
+
+              // 通知状态更新
+              this.handleGroupUpdate(groupId, 'hostUpdated');
+            } catch (error) {
+              console.error('处理主机更新回调失败:', error);
+            }
+          };
+
+          try {
+            const hostItem = createHostElement(groupId, host, hostUpdateCallback);
+            hostsContainer.appendChild(hostItem);
+          } catch (hostError) {
+            console.error(`创建主机元素失败 (ID: ${host.id}):`, hostError);
+            // 添加一个错误占位元素
+            const errorItem = document.createElement('div');
+            errorItem.className = 'host-item error';
+            errorItem.textContent = `加载规则失败: ${host.ip || ''} ${host.domain || ''}`;
+            hostsContainer.appendChild(errorItem);
+          }
+        });
+      } else {
+        // 空状态
+        const emptyHosts = document.createElement('div');
+        emptyHosts.className = 'empty-state';
+        emptyHosts.style.padding = '16px 0';
+        emptyHosts.style.color = 'var(--gray-500)';
+        emptyHosts.textContent = '该分组还没有hosts条目';
+        hostsContainer.appendChild(emptyHosts);
       }
-    });
+
+      // 更新主机数量标签
+      const hostsCountTag = groupElement.querySelector('.group-header .status-tag:nth-child(3)');
+      if (hostsCountTag) {
+        const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
+        hostsCountTag.textContent = `${hostsCount} 条规则`;
+      }
+    } catch (error) {
+      console.error('更新分组主机列表失败:', error);
+    }
   }
 
   /**
    * 刷新主视图
    */
   refreshMainView () {
-    // 清空分组列表但保留扩展状态
-    if (this.groupListContainer) {
-      this.groupListContainer.innerHTML = '';
-    }
+    try {
+      // 如果有最近修改的主机，确保缓存被清除
+      if (this.recentlyModifiedHosts.size > 0) {
+        this.recentlyModifiedHosts.forEach(hostId => {
+          this.renderedHosts.delete(hostId);
+        });
+        // 清空最近修改的主机集合
+        this.recentlyModifiedHosts.clear();
+      }
 
-    // 重新渲染分组列表
-    this.renderGroupList();
+      // 清空分组列表但保留展开状态
+      if (this.groupListContainer) {
+        this.groupListContainer.innerHTML = '';
+      }
+
+      // 清空缓存的分组元素，确保重新渲染
+      this.renderedGroups.clear();
+
+      // 重新渲染分组列表
+      this.renderGroupList();
+    } catch (error) {
+      console.error('刷新主视图失败:', error);
+      // 尝试完全重新渲染页面
+      this.render().catch(err => console.error('重新渲染页面失败:', err));
+    }
   }
 
   /**
    * 销毁组件
    */
   destroy () {
-    // 取消状态订阅
-    if (this.unsubscribe) {
-      this.unsubscribe();
-    }
+    try {
+      // 取消状态订阅
+      if (this.unsubscribe) {
+        this.unsubscribe();
+        this.unsubscribe = null;
+      }
 
-    // 移除事件监听器
-    if (VIRTUALIZATION.enabled && this.virtualScroll.container) {
-      this.virtualScroll.container.removeEventListener('scroll', this.handleScroll);
-      window.removeEventListener('resize', this.handleResize);
-    }
+      // 移除事件监听器
+      if (VIRTUALIZATION.enabled && this.virtualScroll.container) {
+        this.virtualScroll.container.removeEventListener('scroll', this.handleScroll);
+        window.removeEventListener('resize', this.handleResize);
+      }
 
-    // 清空缓存
-    this.renderedGroups.clear();
-    this.renderedHosts.clear();
+      // 移除搜索清除事件监听器
+      if (this._searchClearedHandler) {
+        document.removeEventListener('searchCleared', this._searchClearedHandler);
+        this._searchClearedHandler = null;
+      }
+
+      // 清空缓存
+      this.renderedGroups.clear();
+      this.renderedHosts.clear();
+      this.recentlyModifiedHosts.clear();
+      this.expandedGroups.clear();
+
+      // 清空视图
+      if (this.container) {
+        this.container.innerHTML = '';
+      }
+
+      // 清空引用
+      this.searchBar = null;
+      this.searchResultsContainer = null;
+      this.groupList = null;
+      this.groupListContainer = null;
+      this.virtualScroll.container = null;
+    } catch (error) {
+      console.error('销毁HostsPage组件时出错:', error);
+    }
   }
 }

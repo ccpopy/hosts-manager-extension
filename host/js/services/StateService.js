@@ -727,57 +727,70 @@ class StateService {
       return { matchedGroups: [], totalMatches: 0 };
     }
 
-    const lowercaseKeyword = keyword.toLowerCase();
-    const matchedGroups = [];
-    let totalMatches = 0;
+    try {
+      const lowercaseKeyword = keyword.toLowerCase();
+      const matchedGroups = [];
+      let totalMatches = 0;
 
-    // 使用索引加速搜索，groupId -> matchedHosts[]
-    const matchedGroupMap = new Map();
+      // 使用索引加速搜索，groupId -> matchedHosts[]
+      const matchedGroupMap = new Map();
 
-    // 按域名搜索
-    for (const [domain, entries] of this.searchIndex.domains.entries()) {
-      if (domain.toLowerCase().includes(lowercaseKeyword)) {
-        for (const [groupId, hostId] of entries) {
-          this.addToMatchedResults(matchedGroupMap, groupId, hostId, 'domain');
+      // 按域名搜索
+      for (const [domain, entries] of this.searchIndex.domains.entries()) {
+        if (domain.toLowerCase().includes(lowercaseKeyword)) {
+          for (const [groupId, hostId] of entries) {
+            this.addToMatchedResults(matchedGroupMap, groupId, hostId, 'domain');
+          }
         }
       }
-    }
 
-    // 按IP搜索
-    for (const [ip, entries] of this.searchIndex.ips.entries()) {
-      if (ip.toLowerCase().includes(lowercaseKeyword)) {
-        for (const [groupId, hostId] of entries) {
-          this.addToMatchedResults(matchedGroupMap, groupId, hostId, 'ip');
+      // 按IP搜索
+      for (const [ip, entries] of this.searchIndex.ips.entries()) {
+        if (ip.toLowerCase().includes(lowercaseKeyword)) {
+          for (const [groupId, hostId] of entries) {
+            this.addToMatchedResults(matchedGroupMap, groupId, hostId, 'ip');
+          }
         }
       }
-    }
 
-    // 转换为预期格式的结果
-    for (const [groupId, hostMatches] of matchedGroupMap.entries()) {
-      const group = this.state.hostsGroups.find(g => g.id === groupId);
-      if (!group) continue;
+      // 转换为预期格式的结果
+      for (const [groupId, hostMatches] of matchedGroupMap.entries()) {
+        const group = this.state.hostsGroups.find(g => g.id === groupId);
+        if (!group) continue;
 
-      // 过滤掉可能的null值
-      const matchedHosts = hostMatches.map(match => {
-        const host = group.hosts.find(h => h.id === match.hostId);
-        return {
-          ...host,
-          _matches: match.matches
-        };
-      }).filter(Boolean);
+        // 过滤掉可能的null值，并做数据验证
+        const matchedHosts = hostMatches
+          .map(match => {
+            const host = group.hosts.find(h => h.id === match.hostId);
+            if (!host) return null;
 
-      if (matchedHosts.length > 0) {
-        matchedGroups.push({
-          id: group.id,
-          name: group.name,
-          hosts: matchedHosts,
-          matchCount: matchedHosts.length
-        });
-        totalMatches += matchedHosts.length;
+            // 验证主机数据的完整性
+            if (!host.ip || !host.domain) return null;
+
+            return {
+              ...host,
+              _matches: match.matches
+            };
+          })
+          .filter(Boolean); // 移除null值
+
+        if (matchedHosts.length > 0) {
+          matchedGroups.push({
+            id: group.id,
+            name: group.name,
+            hosts: matchedHosts,
+            matchCount: matchedHosts.length
+          });
+          totalMatches += matchedHosts.length;
+        }
       }
-    }
 
-    return { matchedGroups, totalMatches };
+      return { matchedGroups, totalMatches };
+    } catch (error) {
+      console.error('搜索处理失败:', error);
+      // 发生错误时返回空结果
+      return { matchedGroups: [], totalMatches: 0, error };
+    }
   }
 
   /**
@@ -822,6 +835,118 @@ class StateService {
       return Promise.reject(error);
     }
   }
+
+  /**
+ * 强制刷新状态
+ * 用于确保视图与实际状态同步
+ * @param {boolean} [notifyListeners=true] - 是否通知监听器
+ * @returns {Promise<void>}
+ */
+  async forceRefresh (notifyListeners = true) {
+    try {
+      // 重新从存储获取最新状态
+      const data = await this.getStorageData(['hostsGroups', 'activeGroups', 'socketProxy', 'showAddGroupForm']);
+
+      // 更新内部状态
+      this.state.hostsGroups = data.hostsGroups || [];
+      this.state.activeGroups = data.activeGroups || [];
+      this.state.socketProxy = data.socketProxy || {
+        host: '',
+        port: '',
+        enabled: false,
+        auth: {
+          enabled: false,
+          username: '',
+          password: ''
+        }
+      };
+      this.state.showAddGroupForm = data.showAddGroupForm || false;
+
+      // 重建搜索索引
+      this.buildSearchIndices();
+
+      // 通知监听器
+      if (notifyListeners) {
+        this.notifyListeners();
+      }
+
+      return Promise.resolve();
+    } catch (error) {
+      console.error('强制刷新状态失败:', error);
+      return Promise.reject(error);
+    }
+  }
+
+  /**
+ * 检查主机是否存在于任何分组中
+ * @param {string} hostId - 主机ID
+ * @returns {boolean} - 是否存在
+ */
+  hasHost (hostId) {
+    if (!hostId) return false;
+
+    try {
+      return this.state.hostsGroups.some(group =>
+        group.hosts && group.hosts.some(host => host.id === hostId)
+      );
+    } catch (error) {
+      console.error('检查主机是否存在失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 获取主机所在的分组
+   * @param {string} hostId - 主机ID
+   * @returns {object|null} - {groupId, hostIndex, group, host} 或 null
+   */
+  findHostLocation (hostId) {
+    if (!hostId) return null;
+
+    try {
+      for (const group of this.state.hostsGroups) {
+        if (!group.hosts) continue;
+
+        const hostIndex = group.hosts.findIndex(h => h.id === hostId);
+        if (hostIndex !== -1) {
+          return {
+            groupId: group.id,
+            hostIndex,
+            group,
+            host: group.hosts[hostIndex]
+          };
+        }
+      }
+    } catch (error) {
+      console.error('查找主机位置失败:', error);
+    }
+
+    return null;
+  }
+
+  /**
+   * 同步所有更新到存储
+   * 当可能有多个视图需要同步时使用
+   * @returns {Promise<boolean>} - 是否成功
+   */
+  async syncAll () {
+    try {
+      // 立即保存所有状态，不使用节流
+      await this.saveState(true);
+
+      // 触发代理更新
+      await this.updateProxySettings();
+
+      // 通知所有监听器
+      this.notifyListeners();
+
+      return true;
+    } catch (error) {
+      console.error('同步所有更新失败:', error);
+      return false;
+    }
+  }
+
 }
 
 // 单例模式

@@ -47,33 +47,40 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
     groupContent.id = `${uniqueId}-content`;
 
     // 折叠/展开功能
-    groupHeader.addEventListener('click', (e) => {
-      // 避免点击切换开关时触发折叠
-      if (e.target.tagName === 'INPUT' || e.target.className === 'slider' ||
-        e.target.closest('.toggle-switch')) {
-        return;
-      }
-
-      const isExpanded = groupContent.style.display === 'none';
-      groupContent.style.display = isExpanded ? 'block' : 'none';
-
-      // 更新图标
-      const expandIcon = groupHeader.querySelector('.expand-icon');
-      if (expandIcon) {
-        expandIcon.innerHTML = isExpanded ?
-          '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>' :
-          '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
-      }
-
-      // 触发展开/收起回调
-      if (onExpandToggle) {
-        try {
-          onExpandToggle(group.id, isExpanded);
-        } catch (error) {
-          console.error('处理展开/收起回调时出错:', error);
+    const handleHeaderClick = (e) => {
+      try {
+        // 避免点击切换开关时触发折叠
+        if (e.target.tagName === 'INPUT' || e.target.className === 'slider' ||
+          e.target.closest('.toggle-switch')) {
+          return;
         }
+
+        const isExpanded = groupContent.style.display === 'none';
+        groupContent.style.display = isExpanded ? 'block' : 'none';
+
+        // 更新图标
+        const expandIcon = groupHeader.querySelector('.expand-icon');
+        if (expandIcon) {
+          expandIcon.innerHTML = isExpanded ?
+            '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>' :
+            '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
+        }
+
+        // 触发展开/收起回调
+        if (onExpandToggle) {
+          try {
+            onExpandToggle(group.id, isExpanded);
+          } catch (error) {
+            console.error('处理展开/收起回调时出错:', error);
+          }
+        }
+      } catch (error) {
+        console.error('处理分组展开/收起时出错:', error);
       }
-    });
+    };
+
+    // 添加点击事件监听器
+    groupHeader.addEventListener('click', handleHeaderClick);
 
     // 渲染主机列表
     renderHosts(group, groupContent, onUpdate);
@@ -96,6 +103,7 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
           onUpdate(group.id, 'hostAdded');
         }
       } catch (error) {
+        console.error('处理新增主机回调失败:', error);
         Message.error('更新主机列表失败，请刷新页面');
       }
     });
@@ -179,10 +187,13 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
 
     // 使用节流函数处理状态切换
     const handleToggle = throttle(async (e) => {
-      // 阻止事件冒泡，避免触发分组展开/收起
-      e.stopPropagation();
-
       try {
+        // 阻止事件冒泡，避免触发分组展开/收起
+        e.stopPropagation();
+
+        // 显示状态切换中的反馈
+        statusTag.textContent = checkbox.checked ? '切换中...' : '切换中...';
+
         // 使用 StateService 切换分组状态
         await StateService.toggleGroup(group.id, checkbox.checked);
 
@@ -204,6 +215,11 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
         console.error('切换分组状态失败:', error);
         // 恢复复选框状态
         checkbox.checked = !checkbox.checked;
+
+        // 恢复状态标签
+        statusTag.className = checkbox.checked ? 'status-tag status-tag-success' : 'status-tag status-tag-default';
+        statusTag.textContent = checkbox.checked ? '已启用' : '已禁用';
+
         Message.error('切换分组状态失败，请重试');
       }
     }, 300);
@@ -260,7 +276,11 @@ function renderHosts (group, container, onUpdate) {
               // 刷新列表
               await updateHostsList(group.id, container, onUpdate);
             } else if (typeof actionOrUpdatedHost === 'object') {
-              // 主机更新，不需要刷新列表
+              // 对象类型的主机更新，可能需要特殊处理
+              // 例如：编辑操作返回的修改后主机对象
+            } else if (actionOrUpdatedHost === 'toggled') {
+              // 主机启用/禁用状态切换
+              // 这里无需特殊处理，因为切换操作已经直接更新了DOM
             }
 
             // 通知上层组件
@@ -342,6 +362,9 @@ async function updateHostsList (groupId, container, onUpdate) {
       return;
     }
 
+    // 获取滚动位置，以便更新后恢复
+    const scrollTop = container.scrollTop;
+
     // 移除旧内容
     hostsContainer.innerHTML = '';
 
@@ -368,7 +391,7 @@ async function updateHostsList (groupId, container, onUpdate) {
         };
 
         try {
-          const hostItem = createHostElement(groupId, host, hostUpdateCallback);
+          const hostItem = createHostElement(group.id, host, hostUpdateCallback);
           hostsContainer.appendChild(hostItem);
         } catch (hostError) {
           console.error(`创建主机元素失败 (ID: ${host.id}):`, hostError);
@@ -398,6 +421,13 @@ async function updateHostsList (groupId, container, onUpdate) {
         hostsCountTag.textContent = `${hostsCount} 条规则`;
       }
     }
+
+    // 恢复滚动位置
+    setTimeout(() => {
+      if (container) {
+        container.scrollTop = scrollTop;
+      }
+    }, 0);
   } catch (error) {
     console.error('更新主机列表失败:', error);
     // 尝试显示错误通知
@@ -430,8 +460,14 @@ function createGroupActions (group, groupItem, onUpdate) {
       e.stopPropagation();
 
       try {
+        // 禁用按钮，防止重复点击
+        editButton.disabled = true;
+
         const newName = await Modal.prompt('重命名分组', '输入新的分组名称:', group.name);
         if (newName && newName.trim()) {
+          // 显示处理中状态
+          editButton.textContent = '处理中...';
+
           // 使用 StateService 更新分组名称
           const success = await StateService.updateGroup(group.id, { name: newName.trim() });
           if (success) {
@@ -445,6 +481,9 @@ function createGroupActions (group, groupItem, onUpdate) {
             if (onUpdate) {
               onUpdate(group.id, 'renamed');
             }
+
+            // 显示成功消息
+            Message.success('分组重命名成功');
           } else {
             Message.error('重命名分组失败，可能存在同名分组');
           }
@@ -452,6 +491,10 @@ function createGroupActions (group, groupItem, onUpdate) {
       } catch (error) {
         console.error('重命名分组失败:', error);
         Message.error('重命名分组失败，请重试');
+      } finally {
+        // 恢复按钮状态
+        editButton.disabled = false;
+        editButton.textContent = '重命名';
       }
     });
 
@@ -463,12 +506,18 @@ function createGroupActions (group, groupItem, onUpdate) {
       e.stopPropagation();
 
       try {
+        // 禁用按钮，防止重复点击
+        deleteButton.disabled = true;
+
         const confirmed = await Modal.confirm(
           '删除分组',
           `确定要删除分组 "${group.name}" 吗? 分组中的所有规则都将被删除。`
         );
 
         if (confirmed) {
+          // 显示处理中状态
+          deleteButton.textContent = '删除中...';
+
           // 添加删除中状态
           groupItem.classList.add('deleting');
 
@@ -477,6 +526,8 @@ function createGroupActions (group, groupItem, onUpdate) {
 
           if (!success) {
             groupItem.classList.remove('deleting');
+            deleteButton.textContent = '删除分组';
+            deleteButton.disabled = false;
             Message.error('删除分组失败，请重试');
             return;
           }
@@ -506,11 +557,19 @@ function createGroupActions (group, groupItem, onUpdate) {
             if (onUpdate) {
               onUpdate(group.id, 'deleted');
             }
+
+            // 显示成功消息
+            Message.success('分组已删除');
           }, 300);
+        } else {
+          // 用户取消，恢复按钮状态
+          deleteButton.disabled = false;
         }
       } catch (error) {
         console.error('删除分组失败:', error);
         groupItem.classList.remove('deleting');
+        deleteButton.textContent = '删除分组';
+        deleteButton.disabled = false;
         Message.error('删除分组失败，请重试');
       }
     });
