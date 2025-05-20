@@ -238,45 +238,21 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   domainInput.style.flex = '1';
   domainInput.setAttribute('aria-label', '域名');
 
-  // 添加验证状态指示器
-  const ipValidIndicator = document.createElement('div');
-  ipValidIndicator.className = 'validation-indicator';
-  ipValidIndicator.style.width = '8px';
-  ipValidIndicator.style.height = '8px';
-  ipValidIndicator.style.borderRadius = '50%';
-  ipValidIndicator.style.marginLeft = '4px';
-  ipValidIndicator.style.backgroundColor = isValidIp(currentIp) ? '#10b981' : '#ef4444';
-
-  const domainValidIndicator = document.createElement('div');
-  domainValidIndicator.className = 'validation-indicator';
-  domainValidIndicator.style.width = '8px';
-  domainValidIndicator.style.height = '8px';
-  domainValidIndicator.style.borderRadius = '50%';
-  domainValidIndicator.style.marginLeft = '4px';
-  domainValidIndicator.style.backgroundColor = isValidDomain(currentDomain) ? '#10b981' : '#ef4444';
-
-  // 输入验证
-  ipInput.addEventListener('input', () => {
-    ipValidIndicator.style.backgroundColor = isValidIp(ipInput.value.trim()) ? '#10b981' : '#ef4444';
-  });
-
-  domainInput.addEventListener('input', () => {
-    domainValidIndicator.style.backgroundColor = isValidDomain(domainInput.value.trim()) ? '#10b981' : '#ef4444';
-  });
-
   // IP输入容器
   const ipContainer = document.createElement('div');
   ipContainer.style.display = 'flex';
   ipContainer.style.alignItems = 'center';
   ipContainer.appendChild(ipInput);
-  ipContainer.appendChild(ipValidIndicator);
+  // 移除对验证指示器的添加
+  // ipContainer.appendChild(ipValidIndicator);
 
   // 域名输入容器
   const domainContainer = document.createElement('div');
   domainContainer.style.display = 'flex';
   domainContainer.style.alignItems = 'center';
   domainContainer.appendChild(domainInput);
-  domainContainer.appendChild(domainValidIndicator);
+  // 移除对验证指示器的添加
+  // domainContainer.appendChild(domainValidIndicator);
 
   // 保存按钮
   const saveButton = createButton('保存', 'button-primary', async () => {
@@ -542,9 +518,14 @@ export function createAddHostForm (groupId, container, onAdd) {
         ipInput.value = '';
         domainInput.value = '';
 
+        // 移除验证指示器代码
+        // 原代码删除开始
+        /*
         // 重置验证指示器
         ipValidIndicator.style.backgroundColor = '#d1d5db';
         domainValidIndicator.style.backgroundColor = '#d1d5db';
+        */
+        // 原代码删除结束
 
         if (onAdd) {
           onAdd(newHost);

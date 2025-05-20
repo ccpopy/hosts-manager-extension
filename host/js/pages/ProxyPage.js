@@ -3,7 +3,6 @@
  * 管理Socket代理设置
  */
 import StateService from '../services/StateService.js';
-import ProxyService from '../services/ProxyService.js';
 import { createNotice } from '../components/Notice.js';
 import { Message } from '../utils/MessageUtils.js';
 
@@ -74,6 +73,11 @@ export default class ProxyPage {
     // 创建设置表单
     const proxyForm = this.createProxyForm(state.socketProxy);
     this.container.appendChild(proxyForm);
+
+    // 初始化表单状态 - 修复：确保初始加载时正确设置表单状态
+    setTimeout(() => {
+      this.updateFormState();
+    }, 0);
   }
 
   /**
@@ -121,7 +125,6 @@ export default class ProxyPage {
     this.elements.hostInput.id = 'proxy-host';
     this.elements.hostInput.placeholder = '例如: 127.0.0.1';
     this.elements.hostInput.value = proxySettings.host || '';
-    this.elements.hostInput.required = true;
 
     hostFormGroup.appendChild(hostLabel);
     hostFormGroup.appendChild(this.elements.hostInput);
@@ -141,7 +144,6 @@ export default class ProxyPage {
     this.elements.portInput.value = proxySettings.port || '';
     this.elements.portInput.min = '1';
     this.elements.portInput.max = '65535';
-    this.elements.portInput.required = true;
 
     portFormGroup.appendChild(portLabel);
     portFormGroup.appendChild(this.elements.portInput);
@@ -249,7 +251,6 @@ export default class ProxyPage {
     this.elements.usernameInput.id = 'auth-username';
     this.elements.usernameInput.placeholder = '输入用户名';
     this.elements.usernameInput.value = proxySettings.auth ? (proxySettings.auth.username || '') : '';
-    this.elements.usernameInput.disabled = !this.elements.authEnabledCheckbox.checked;
 
     usernameFormGroup.appendChild(usernameLabel);
     usernameFormGroup.appendChild(this.elements.usernameInput);
@@ -269,7 +270,6 @@ export default class ProxyPage {
     this.elements.passwordInput.id = 'auth-password';
     this.elements.passwordInput.placeholder = '输入密码';
     this.elements.passwordInput.value = proxySettings.auth ? (proxySettings.auth.password || '') : '';
-    this.elements.passwordInput.disabled = !this.elements.authEnabledCheckbox.checked;
 
     passwordFormGroup.appendChild(passwordLabel);
     passwordFormGroup.appendChild(this.elements.passwordInput);
@@ -294,14 +294,12 @@ export default class ProxyPage {
     // 添加表单到容器
     proxySection.appendChild(formContainer);
 
-    // 初始化表单状态
-    this.updateFormState();
-
     return proxySection;
   }
 
   /**
    * 根据启用状态更新表单
+   * 修复：确保当Socket代理启用时，主机和端口可以编辑
    */
   updateFormState () {
     // 防止在元素不存在时调用
@@ -309,12 +307,32 @@ export default class ProxyPage {
 
     const enabled = this.elements.enabledCheckbox.checked;
 
-    // 启用/禁用主机和端口输入
-    if (this.elements.hostInput) this.elements.hostInput.disabled = !enabled;
-    if (this.elements.portInput) this.elements.portInput.disabled = !enabled;
+    // 修复：确保主机和端口输入框状态正确设置
+    // 当代理启用时，这些字段应该可编辑
+    if (this.elements.hostInput) {
+      this.elements.hostInput.disabled = !enabled;
+      // 确保字段没有required属性，除非代理启用
+      if (enabled) {
+        this.elements.hostInput.setAttribute('required', 'required');
+      } else {
+        this.elements.hostInput.removeAttribute('required');
+      }
+    }
+
+    if (this.elements.portInput) {
+      this.elements.portInput.disabled = !enabled;
+      // 确保字段没有required属性，除非代理启用
+      if (enabled) {
+        this.elements.portInput.setAttribute('required', 'required');
+      } else {
+        this.elements.portInput.removeAttribute('required');
+      }
+    }
 
     // 启用/禁用认证部分
-    if (this.elements.authEnabledCheckbox) this.elements.authEnabledCheckbox.disabled = !enabled;
+    if (this.elements.authEnabledCheckbox) {
+      this.elements.authEnabledCheckbox.disabled = !enabled;
+    }
 
     // 更新认证输入框状态
     this.updateAuthFormState();
@@ -330,8 +348,25 @@ export default class ProxyPage {
     const authEnabled = this.elements.authEnabledCheckbox.checked && this.elements.enabledCheckbox.checked;
 
     // 启用/禁用认证输入框
-    if (this.elements.usernameInput) this.elements.usernameInput.disabled = !authEnabled;
-    if (this.elements.passwordInput) this.elements.passwordInput.disabled = !authEnabled;
+    if (this.elements.usernameInput) {
+      this.elements.usernameInput.disabled = !authEnabled;
+      // 只有当认证启用时才需要验证
+      if (authEnabled) {
+        this.elements.usernameInput.setAttribute('required', 'required');
+      } else {
+        this.elements.usernameInput.removeAttribute('required');
+      }
+    }
+
+    if (this.elements.passwordInput) {
+      this.elements.passwordInput.disabled = !authEnabled;
+      // 只有当认证启用时才需要验证
+      if (authEnabled) {
+        this.elements.passwordInput.setAttribute('required', 'required');
+      } else {
+        this.elements.passwordInput.removeAttribute('required');
+      }
+    }
   }
 
   /**
@@ -381,11 +416,22 @@ export default class ProxyPage {
         }
       };
 
-      // 验证代理配置
+      // 验证
       if (enabled) {
-        const validation = ProxyService.validateProxyConfig(proxyConfig);
-        if (!validation.valid) {
-          Message.error(validation.message || '代理配置无效');
+        // 验证主机和端口
+        if (!host) {
+          Message.error('代理主机不能为空');
+          return;
+        }
+
+        if (!port) {
+          Message.error('代理端口不能为空');
+          return;
+        }
+
+        const portNum = parseInt(port, 10);
+        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+          Message.error('代理端口必须是1-65535之间的数字');
           return;
         }
 
@@ -400,18 +446,13 @@ export default class ProxyPage {
       await StateService.updateSocketProxy(proxyConfig);
 
       // 更新代理
-      await ProxyService.updateProxySettings();
+      await this.updateProxySettings();
 
       // 显示成功消息
       Message.success('代理设置已保存并应用');
     } catch (error) {
       console.error('保存代理设置失败:', error);
-      // 使用原生alert作为后备，防止消息组件失败
-      try {
-        Message.error(`保存设置失败: ${error.message}`);
-      } catch (e) {
-        alert(`保存设置失败: ${error.message}`);
-      }
+      Message.error(`保存设置失败: ${error.message}`);
     } finally {
       // 恢复按钮状态，安全检查
       if (saveButton) {
@@ -419,6 +460,18 @@ export default class ProxyPage {
         saveButton.textContent = '保存设置';
       }
       this.isSubmitting = false;
+    }
+  }
+
+  /**
+   * 更新代理设置
+   */
+  async updateProxySettings () {
+    try {
+      return await StateService.updateProxySettings();
+    } catch (error) {
+      console.error('更新代理设置失败:', error);
+      throw error;
     }
   }
 

@@ -161,6 +161,9 @@ export default class HostsPage {
 
     actionBar.appendChild(addGroupButton);
 
+    // 移除批量操作按钮容器和对应的按钮
+    // 原代码删除开始
+    /*
     // 批量操作按钮容器
     const batchActionsContainer = document.createElement('div');
     batchActionsContainer.className = 'batch-actions';
@@ -182,6 +185,8 @@ export default class HostsPage {
     batchActionsContainer.appendChild(disableAllButton);
 
     actionBar.appendChild(batchActionsContainer);
+    */
+    // 原代码删除结束
 
     // 添加搜索栏
     this.searchBar = new SearchBar(keyword => {
@@ -198,33 +203,6 @@ export default class HostsPage {
     actionBar.appendChild(searchBarWrapper);
 
     return actionBar;
-  }
-
-  /**
-   * 处理启用所有分组
-   */
-  async handleEnableAllGroups () {
-    const state = StateService.getState();
-    const allGroupIds = state.hostsGroups.map(group => group.id);
-
-    try {
-      // 使用自定义状态更新避免多次重绘
-      await StateService.batchToggleGroups(allGroupIds, true);
-    } catch (error) {
-      console.error('启用所有分组失败:', error);
-    }
-  }
-
-  /**
-   * 处理禁用所有分组
-   */
-  async handleDisableAllGroups () {
-    try {
-      // 使用自定义状态更新避免多次重绘
-      await StateService.batchToggleGroups([], false);
-    } catch (error) {
-      console.error('禁用所有分组失败:', error);
-    }
   }
 
   /**
