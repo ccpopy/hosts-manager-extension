@@ -1,10 +1,12 @@
+/**
+ * 代理页面类
+ * 管理Socket代理设置
+ */
 import StateService from '../services/StateService.js';
+import ProxyService from '../services/ProxyService.js';
 import { createNotice } from '../components/Notice.js';
 import { Message } from '../utils/MessageUtils.js';
 
-/**
- * 代理页面类
- */
 export default class ProxyPage {
   /**
    * 构造函数
@@ -12,6 +14,19 @@ export default class ProxyPage {
    */
   constructor(container) {
     this.container = container;
+    this.isSubmitting = false; // 标记是否正在提交
+    this.formElement = null; // 存储表单元素引用
+
+    // 表单元素引用
+    this.elements = {
+      hostInput: null,
+      portInput: null,
+      enabledCheckbox: null,
+      authEnabledCheckbox: null,
+      usernameInput: null,
+      passwordInput: null,
+      saveButton: null
+    };
 
     // 订阅状态变化
     this.unsubscribe = StateService.subscribe(state => {
@@ -24,8 +39,13 @@ export default class ProxyPage {
    * 初始化页面
    */
   async init () {
-    await StateService.initialize();
-    await this.render();
+    try {
+      await StateService.initialize();
+      await this.render();
+    } catch (error) {
+      console.error('初始化代理页面失败:', error);
+      this.renderError('初始化页面失败，请刷新重试');
+    }
   }
 
   /**
@@ -51,8 +71,42 @@ export default class ProxyPage {
     );
     this.container.appendChild(proxyNotice);
 
+    // 创建设置表单
+    const proxyForm = this.createProxyForm(state.socketProxy);
+    this.container.appendChild(proxyForm);
+  }
+
+  /**
+   * 创建代理表单
+   * @param {Object} proxySettings - 代理设置
+   * @returns {HTMLElement} - 表单元素
+   */
+  createProxyForm (proxySettings) {
     const proxySection = document.createElement('div');
     proxySection.className = 'proxy-section';
+
+    // 表单容器
+    const formContainer = document.createElement('form');
+    formContainer.className = 'proxy-form';
+
+    // 保存表单引用，用于后续移除事件监听器
+    this.formElement = formContainer;
+
+    // 使用绑定的方法，确保this指向正确
+    const boundSaveHandler = this.handleSaveProxy.bind(this);
+    formContainer.addEventListener('submit', e => {
+      e.preventDefault();
+      boundSaveHandler();
+    });
+
+    // 主机和端口
+    const basicSettingsSection = document.createElement('div');
+    basicSettingsSection.className = 'form-section';
+
+    const basicSettingsTitle = document.createElement('h3');
+    basicSettingsTitle.className = 'section-title';
+    basicSettingsTitle.textContent = '代理服务器';
+    basicSettingsSection.appendChild(basicSettingsTitle);
 
     // 主机输入
     const hostFormGroup = document.createElement('div');
@@ -60,15 +114,17 @@ export default class ProxyPage {
 
     const hostLabel = document.createElement('label');
     hostLabel.textContent = '代理主机:';
+    hostLabel.htmlFor = 'proxy-host';
 
-    this.hostInput = document.createElement('input');
-    this.hostInput.type = 'text';
-    this.hostInput.id = 'proxy-host';
-    this.hostInput.placeholder = '例如: 127.0.0.1';
-    this.hostInput.value = state.socketProxy.host || '';
+    this.elements.hostInput = document.createElement('input');
+    this.elements.hostInput.type = 'text';
+    this.elements.hostInput.id = 'proxy-host';
+    this.elements.hostInput.placeholder = '例如: 127.0.0.1';
+    this.elements.hostInput.value = proxySettings.host || '';
+    this.elements.hostInput.required = true;
 
     hostFormGroup.appendChild(hostLabel);
-    hostFormGroup.appendChild(this.hostInput);
+    hostFormGroup.appendChild(this.elements.hostInput);
 
     // 端口输入
     const portFormGroup = document.createElement('div');
@@ -76,22 +132,26 @@ export default class ProxyPage {
 
     const portLabel = document.createElement('label');
     portLabel.textContent = '端口:';
+    portLabel.htmlFor = 'proxy-port';
 
-    this.portInput = document.createElement('input');
-    this.portInput.type = 'text';
-    this.portInput.id = 'proxy-port';
-    this.portInput.placeholder = '例如: 8080';
-    this.portInput.value = state.socketProxy.port || '';
+    this.elements.portInput = document.createElement('input');
+    this.elements.portInput.type = 'number';
+    this.elements.portInput.id = 'proxy-port';
+    this.elements.portInput.placeholder = '例如: 8080';
+    this.elements.portInput.value = proxySettings.port || '';
+    this.elements.portInput.min = '1';
+    this.elements.portInput.max = '65535';
+    this.elements.portInput.required = true;
 
     portFormGroup.appendChild(portLabel);
-    portFormGroup.appendChild(this.portInput);
+    portFormGroup.appendChild(this.elements.portInput);
 
     // 表单行
     const proxyForm = document.createElement('div');
     proxyForm.className = 'form-row';
     proxyForm.appendChild(hostFormGroup);
     proxyForm.appendChild(portFormGroup);
-    proxySection.appendChild(proxyForm);
+    basicSettingsSection.appendChild(proxyForm);
 
     // 启用代理切换
     const enableGroup = document.createElement('div');
@@ -100,32 +160,44 @@ export default class ProxyPage {
 
     const enableLabel = document.createElement('label');
     enableLabel.textContent = '启用 Socket 代理:';
+    enableLabel.htmlFor = 'proxy-enabled';
     enableLabel.style.marginBottom = '0';
 
     const toggleSwitch = document.createElement('label');
     toggleSwitch.className = 'toggle-switch';
 
-    this.checkbox = document.createElement('input');
-    this.checkbox.type = 'checkbox';
-    this.checkbox.id = 'proxy-enabled';
-    this.checkbox.checked = !!state.socketProxy.enabled;
+    this.elements.enabledCheckbox = document.createElement('input');
+    this.elements.enabledCheckbox.type = 'checkbox';
+    this.elements.enabledCheckbox.id = 'proxy-enabled';
+    this.elements.enabledCheckbox.checked = !!proxySettings.enabled;
+
+    // 监听启用状态变化
+    this.elements.enabledCheckbox.addEventListener('change', () => {
+      this.updateFormState();
+    });
 
     const slider = document.createElement('span');
     slider.className = 'slider';
 
-    toggleSwitch.appendChild(this.checkbox);
+    toggleSwitch.appendChild(this.elements.enabledCheckbox);
     toggleSwitch.appendChild(slider);
 
     enableGroup.appendChild(enableLabel);
     enableGroup.appendChild(toggleSwitch);
-    proxySection.appendChild(enableGroup);
+    basicSettingsSection.appendChild(enableGroup);
+
+    formContainer.appendChild(basicSettingsSection);
+
+    // 认证部分
+    const authSection = document.createElement('div');
+    authSection.className = 'form-section';
+    authSection.style.marginTop = '24px';
 
     // 认证部分的标题
     const authTitle = document.createElement('h3');
     authTitle.className = 'section-title';
-    authTitle.style.marginTop = '24px';
     authTitle.textContent = '认证设置';
-    proxySection.appendChild(authTitle);
+    authSection.appendChild(authTitle);
 
     // 启用认证切换
     const authEnableGroup = document.createElement('div');
@@ -134,31 +206,31 @@ export default class ProxyPage {
 
     const authEnableLabel = document.createElement('label');
     authEnableLabel.textContent = '启用认证:';
+    authEnableLabel.htmlFor = 'auth-enabled';
     authEnableLabel.style.marginBottom = '0';
 
     const authToggleSwitch = document.createElement('label');
     authToggleSwitch.className = 'toggle-switch';
 
-    this.authCheckbox = document.createElement('input');
-    this.authCheckbox.type = 'checkbox';
-    this.authCheckbox.id = 'auth-enabled';
-    this.authCheckbox.checked = state.socketProxy.auth ? !!state.socketProxy.auth.enabled : false;
+    this.elements.authEnabledCheckbox = document.createElement('input');
+    this.elements.authEnabledCheckbox.type = 'checkbox';
+    this.elements.authEnabledCheckbox.id = 'auth-enabled';
+    this.elements.authEnabledCheckbox.checked = proxySettings.auth ? !!proxySettings.auth.enabled : false;
 
     // 监听认证开关变化以启用/禁用认证输入框
-    this.authCheckbox.addEventListener('change', () => {
-      this.usernameInput.disabled = !this.authCheckbox.checked;
-      this.passwordInput.disabled = !this.authCheckbox.checked;
+    this.elements.authEnabledCheckbox.addEventListener('change', () => {
+      this.updateAuthFormState();
     });
 
     const authSlider = document.createElement('span');
     authSlider.className = 'slider';
 
-    authToggleSwitch.appendChild(this.authCheckbox);
+    authToggleSwitch.appendChild(this.elements.authEnabledCheckbox);
     authToggleSwitch.appendChild(authSlider);
 
     authEnableGroup.appendChild(authEnableLabel);
     authEnableGroup.appendChild(authToggleSwitch);
-    proxySection.appendChild(authEnableGroup);
+    authSection.appendChild(authEnableGroup);
 
     // 认证用户名和密码输入
     const authForm = document.createElement('div');
@@ -170,16 +242,17 @@ export default class ProxyPage {
 
     const usernameLabel = document.createElement('label');
     usernameLabel.textContent = '用户名:';
+    usernameLabel.htmlFor = 'auth-username';
 
-    this.usernameInput = document.createElement('input');
-    this.usernameInput.type = 'text';
-    this.usernameInput.id = 'auth-username';
-    this.usernameInput.placeholder = '输入用户名';
-    this.usernameInput.value = state.socketProxy.auth ? (state.socketProxy.auth.username || '') : '';
-    this.usernameInput.disabled = !this.authCheckbox.checked;
+    this.elements.usernameInput = document.createElement('input');
+    this.elements.usernameInput.type = 'text';
+    this.elements.usernameInput.id = 'auth-username';
+    this.elements.usernameInput.placeholder = '输入用户名';
+    this.elements.usernameInput.value = proxySettings.auth ? (proxySettings.auth.username || '') : '';
+    this.elements.usernameInput.disabled = !this.elements.authEnabledCheckbox.checked;
 
     usernameFormGroup.appendChild(usernameLabel);
-    usernameFormGroup.appendChild(this.usernameInput);
+    usernameFormGroup.appendChild(this.elements.usernameInput);
     authForm.appendChild(usernameFormGroup);
 
     // 密码输入
@@ -189,44 +262,115 @@ export default class ProxyPage {
 
     const passwordLabel = document.createElement('label');
     passwordLabel.textContent = '密码:';
+    passwordLabel.htmlFor = 'auth-password';
 
-    this.passwordInput = document.createElement('input');
-    this.passwordInput.type = 'password';
-    this.passwordInput.id = 'auth-password';
-    this.passwordInput.placeholder = '输入密码';
-    this.passwordInput.value = state.socketProxy.auth ? (state.socketProxy.auth.password || '') : '';
-    this.passwordInput.disabled = !this.authCheckbox.checked;
+    this.elements.passwordInput = document.createElement('input');
+    this.elements.passwordInput.type = 'password';
+    this.elements.passwordInput.id = 'auth-password';
+    this.elements.passwordInput.placeholder = '输入密码';
+    this.elements.passwordInput.value = proxySettings.auth ? (proxySettings.auth.password || '') : '';
+    this.elements.passwordInput.disabled = !this.elements.authEnabledCheckbox.checked;
 
     passwordFormGroup.appendChild(passwordLabel);
-    passwordFormGroup.appendChild(this.passwordInput);
+    passwordFormGroup.appendChild(this.elements.passwordInput);
     authForm.appendChild(passwordFormGroup);
 
-    proxySection.appendChild(authForm);
+    authSection.appendChild(authForm);
+    formContainer.appendChild(authSection);
 
-    // 保存代理按钮
+    // 保存按钮
     const formActions = document.createElement('div');
     formActions.className = 'form-actions';
     formActions.style.marginTop = '24px';
 
-    const saveProxyBtn = document.createElement('button');
-    saveProxyBtn.className = 'button button-primary';
-    saveProxyBtn.textContent = '保存设置';
-    saveProxyBtn.addEventListener('click', async () => {
-      const host = this.hostInput.value.trim();
-      const port = this.portInput.value.trim();
-      const enabled = this.checkbox.checked;
-      const authEnabled = this.authCheckbox.checked;
-      const username = this.usernameInput.value.trim();
-      const password = this.passwordInput.value.trim();
+    this.elements.saveButton = document.createElement('button');
+    this.elements.saveButton.type = 'submit';
+    this.elements.saveButton.className = 'button button-primary';
+    this.elements.saveButton.textContent = '保存设置';
 
-      // 如果启用了认证，但未提供用户名或密码，则提示错误
-      if (authEnabled && (!username || !password)) {
-        Message.error('请输入用户名和密码');
-        return;
-      }
+    formActions.appendChild(this.elements.saveButton);
+    formContainer.appendChild(formActions);
 
-      // 更新代理设置
-      await StateService.updateSocketProxy({
+    // 添加表单到容器
+    proxySection.appendChild(formContainer);
+
+    // 初始化表单状态
+    this.updateFormState();
+
+    return proxySection;
+  }
+
+  /**
+   * 根据启用状态更新表单
+   */
+  updateFormState () {
+    // 防止在元素不存在时调用
+    if (!this.elements || !this.elements.enabledCheckbox) return;
+
+    const enabled = this.elements.enabledCheckbox.checked;
+
+    // 启用/禁用主机和端口输入
+    if (this.elements.hostInput) this.elements.hostInput.disabled = !enabled;
+    if (this.elements.portInput) this.elements.portInput.disabled = !enabled;
+
+    // 启用/禁用认证部分
+    if (this.elements.authEnabledCheckbox) this.elements.authEnabledCheckbox.disabled = !enabled;
+
+    // 更新认证输入框状态
+    this.updateAuthFormState();
+  }
+
+  /**
+   * 更新认证表单状态
+   */
+  updateAuthFormState () {
+    // 防止在元素不存在时调用
+    if (!this.elements || !this.elements.authEnabledCheckbox || !this.elements.enabledCheckbox) return;
+
+    const authEnabled = this.elements.authEnabledCheckbox.checked && this.elements.enabledCheckbox.checked;
+
+    // 启用/禁用认证输入框
+    if (this.elements.usernameInput) this.elements.usernameInput.disabled = !authEnabled;
+    if (this.elements.passwordInput) this.elements.passwordInput.disabled = !authEnabled;
+  }
+
+  /**
+   * 处理保存代理设置
+   */
+  async handleSaveProxy () {
+    // 防止在元素不存在时调用
+    if (!this.elements) {
+      console.error('表单元素不存在，无法保存设置');
+      return;
+    }
+
+    // 防止重复提交
+    if (this.isSubmitting) return;
+    this.isSubmitting = true;
+
+    // 获取保存按钮引用 - 安全检查
+    const saveButton = this.elements.saveButton;
+    if (!saveButton) {
+      console.error('保存按钮不存在');
+      this.isSubmitting = false;
+      return;
+    }
+
+    try {
+      // 禁用保存按钮
+      saveButton.disabled = true;
+      saveButton.textContent = '保存中...';
+
+      // 安全地获取表单值
+      const host = this.elements.hostInput ? this.elements.hostInput.value.trim() : '';
+      const port = this.elements.portInput ? this.elements.portInput.value.trim() : '';
+      const enabled = this.elements.enabledCheckbox ? this.elements.enabledCheckbox.checked : false;
+      const authEnabled = this.elements.authEnabledCheckbox ? this.elements.authEnabledCheckbox.checked : false;
+      const username = this.elements.usernameInput ? this.elements.usernameInput.value.trim() : '';
+      const password = this.elements.passwordInput ? this.elements.passwordInput.value.trim() : '';
+
+      // 构建代理配置
+      const proxyConfig = {
         host,
         port,
         enabled,
@@ -235,14 +379,47 @@ export default class ProxyPage {
           username,
           password
         }
-      });
+      };
 
-      Message.success('设置已保存');
-    });
+      // 验证代理配置
+      if (enabled) {
+        const validation = ProxyService.validateProxyConfig(proxyConfig);
+        if (!validation.valid) {
+          Message.error(validation.message || '代理配置无效');
+          return;
+        }
 
-    formActions.appendChild(saveProxyBtn);
-    proxySection.appendChild(formActions);
-    this.container.appendChild(proxySection);
+        // 验证认证信息
+        if (authEnabled && (!username || !password)) {
+          Message.error('启用认证时必须提供用户名和密码');
+          return;
+        }
+      }
+
+      // 更新代理设置
+      await StateService.updateSocketProxy(proxyConfig);
+
+      // 更新代理
+      await ProxyService.updateProxySettings();
+
+      // 显示成功消息
+      Message.success('代理设置已保存并应用');
+    } catch (error) {
+      console.error('保存代理设置失败:', error);
+      // 使用原生alert作为后备，防止消息组件失败
+      try {
+        Message.error(`保存设置失败: ${error.message}`);
+      } catch (e) {
+        alert(`保存设置失败: ${error.message}`);
+      }
+    } finally {
+      // 恢复按钮状态，安全检查
+      if (saveButton) {
+        saveButton.disabled = false;
+        saveButton.textContent = '保存设置';
+      }
+      this.isSubmitting = false;
+    }
   }
 
   /**
@@ -250,34 +427,110 @@ export default class ProxyPage {
    * @param {Object} proxySettings - 代理设置
    */
   updateProxyUI (proxySettings) {
-    if (!this.hostInput || !this.portInput || !this.checkbox ||
-      !this.authCheckbox || !this.usernameInput || !this.passwordInput) return;
+    // 检查元素是否存在
+    if (!this.elements) return;
 
-    this.hostInput.value = proxySettings.host || '';
-    this.portInput.value = proxySettings.port || '';
-    this.checkbox.checked = !!proxySettings.enabled;
+    try {
+      // 更新基本设置 - 添加安全检查
+      if (this.elements.hostInput) this.elements.hostInput.value = proxySettings.host || '';
+      if (this.elements.portInput) this.elements.portInput.value = proxySettings.port || '';
+      if (this.elements.enabledCheckbox) this.elements.enabledCheckbox.checked = !!proxySettings.enabled;
 
-    if (proxySettings.auth) {
-      this.authCheckbox.checked = !!proxySettings.auth.enabled;
-      this.usernameInput.value = proxySettings.auth.username || '';
-      this.passwordInput.value = proxySettings.auth.password || '';
-      this.usernameInput.disabled = !proxySettings.auth.enabled;
-      this.passwordInput.disabled = !proxySettings.auth.enabled;
-    } else {
-      this.authCheckbox.checked = false;
-      this.usernameInput.value = '';
-      this.passwordInput.value = '';
-      this.usernameInput.disabled = true;
-      this.passwordInput.disabled = true;
+      // 更新认证设置 - 添加安全检查
+      if (this.elements.authEnabledCheckbox && proxySettings.auth) {
+        this.elements.authEnabledCheckbox.checked = !!proxySettings.auth.enabled;
+      }
+
+      if (this.elements.usernameInput && proxySettings.auth) {
+        this.elements.usernameInput.value = proxySettings.auth.username || '';
+      }
+
+      if (this.elements.passwordInput && proxySettings.auth) {
+        this.elements.passwordInput.value = proxySettings.auth.password || '';
+      }
+
+      // 更新表单状态
+      this.updateFormState();
+    } catch (error) {
+      console.error('更新代理UI失败:', error);
     }
   }
 
   /**
-   * 销毁组件时取消订阅
+   * 渲染错误状态
+   * @param {string} message - 错误消息
+   */
+  renderError (message) {
+    // 清空容器
+    this.container.innerHTML = '';
+
+    // 创建错误容器
+    const errorContainer = document.createElement('div');
+    errorContainer.className = 'page-error-container';
+
+    // 错误图标
+    const errorIcon = document.createElement('div');
+    errorIcon.style.fontSize = '48px';
+    errorIcon.style.marginBottom = '16px';
+    errorIcon.innerHTML = '⚠️';
+    errorContainer.appendChild(errorIcon);
+
+    // 错误标题
+    const errorTitle = document.createElement('h3');
+    errorTitle.textContent = '发生错误';
+    errorTitle.style.marginBottom = '8px';
+    errorContainer.appendChild(errorTitle);
+
+    // 错误消息
+    const errorMessage = document.createElement('p');
+    errorMessage.textContent = message;
+    errorMessage.style.marginBottom = '16px';
+    errorContainer.appendChild(errorMessage);
+
+    // 重试按钮
+    const retryButton = document.createElement('button');
+    retryButton.className = 'button button-primary';
+    retryButton.textContent = '重试';
+    retryButton.addEventListener('click', () => {
+      this.init();
+    });
+    errorContainer.appendChild(retryButton);
+
+    this.container.appendChild(errorContainer);
+  }
+
+  /**
+   * 销毁组件
    */
   destroy () {
-    if (this.unsubscribe) {
-      this.unsubscribe();
+    try {
+      // 取消状态订阅
+      if (this.unsubscribe) {
+        this.unsubscribe();
+      }
+
+      // 移除表单事件监听器
+      if (this.formElement) {
+        // 使用克隆替换元素以移除所有事件监听器
+        const newForm = this.formElement.cloneNode(true);
+        if (this.formElement.parentNode) {
+          this.formElement.parentNode.replaceChild(newForm, this.formElement);
+        }
+        this.formElement = null;
+      }
+
+      // 移除elements引用前记录页面是否正在处理提交
+      const isSubmitting = this.isSubmitting;
+
+      // 清空元素引用 - 保留一个空对象而不是设为null
+      this.elements = {};
+
+      // 如果页面正在提交，显示警告
+      if (isSubmitting) {
+        console.warn('组件在提交过程中被销毁');
+      }
+    } catch (error) {
+      console.error('销毁代理页面失败:', error);
     }
   }
 }

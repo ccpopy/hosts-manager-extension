@@ -1,99 +1,379 @@
 /**
- * 代理服务，处理与代理相关的操作
+ * 代理服务
+ * 处理与代理相关的操作，包括代理设置更新和规则导入
  */
+import { parseHostRule, isValidIp, isValidDomain, normalizeHostRule } from '../utils/ValidationUtils.js';
+
 export default class ProxyService {
   /**
    * 更新代理设置
-   * @returns {Promise<Object>} - 结果
+   * 向后台脚本发送消息，更新Chrome代理配置
+   * @returns {Promise<Object>} - 结果对象
    */
   static updateProxySettings () {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ action: 'updateProxySettings' }, (response) => {
-        resolve(response || { success: true });
-      });
+    return new Promise((resolve, reject) => {
+      try {
+        const timeoutId = setTimeout(() => {
+          reject(new Error('更新代理设置超时，后台脚本可能未响应'));
+        }, 5000); // 5秒超时
+
+        chrome.runtime.sendMessage({ action: 'updateProxySettings' }, (response) => {
+          clearTimeout(timeoutId);
+
+          if (chrome.runtime.lastError) {
+            reject(new Error(`代理更新错误: ${chrome.runtime.lastError.message}`));
+            return;
+          }
+
+          if (!response) {
+            reject(new Error('未收到来自后台脚本的响应'));
+            return;
+          }
+
+          if (!response.success) {
+            reject(new Error(response.message || '代理更新失败'));
+            return;
+          }
+
+          resolve(response);
+        });
+      } catch (error) {
+        reject(new Error(`更新代理设置失败: ${error.message}`));
+      }
     });
   }
 
   /**
-   * 解析并导入规则
-   * @param {string} rulesText - 规则文本
-   * @param {string} groupId - 分组ID
-   * @returns {Promise<Object>} - 导入结果
+   * 验证 SOCKS 代理配置
+   * @param {object} proxy - 代理配置
+   * @returns {object} - 验证结果 {valid: boolean, message: string}
    */
-  static async parseAndImportRules (rulesText, groupId) {
-    if (!rulesText || !groupId) {
-      return { success: false, message: '规则文本或分组ID不能为空', imported: 0, skipped: 0 };
+  static validateProxyConfig (proxy) {
+    if (!proxy) {
+      return { valid: false, message: '代理配置不能为空' };
     }
 
-    const lines = rulesText.split('\n');
-    let imported = 0;
-    let skipped = 0;
+    // 如果禁用，则不需要验证其他字段
+    if (!proxy.enabled) {
+      return { valid: true };
+    }
 
-    return new Promise((resolve) => {
-      chrome.storage.local.get(['hostsGroups'], (result) => {
-        const hostsGroups = result.hostsGroups || [];
-        const groupIndex = hostsGroups.findIndex(g => g.id === groupId);
+    // 验证主机
+    if (!proxy.host || !proxy.host.trim()) {
+      return { valid: false, message: '代理主机不能为空' };
+    }
 
-        if (groupIndex === -1) {
-          resolve({ success: false, message: '未找到指定的分组', imported, skipped });
-          return;
-        }
+    // 验证端口
+    if (!proxy.port) {
+      return { valid: false, message: '代理端口不能为空' };
+    }
 
-        const group = hostsGroups[groupIndex];
-        const newHosts = [];
+    const port = Number(proxy.port);
+    if (isNaN(port) || port < 1 || port > 65535) {
+      return { valid: false, message: '代理端口必须是 1-65535 之间的数字' };
+    }
 
-        lines.forEach(line => {
-          line = line.trim();
+    // 验证认证信息（如果启用）
+    if (proxy.auth && proxy.auth.enabled) {
+      if (!proxy.auth.username || !proxy.auth.username.trim()) {
+        return { valid: false, message: '代理用户名不能为空' };
+      }
+
+      if (!proxy.auth.password) {
+        return { valid: false, message: '代理密码不能为空' };
+      }
+    }
+
+    return { valid: true };
+  }
+
+  /**
+   * 解析并导入规则
+   * 更健壮的批量导入实现，提供详细的错误信息
+   * @param {string} rulesText - 规则文本
+   * @param {string} groupId - 分组ID
+   * @param {object} [options] - 导入选项
+   * @param {boolean} [options.skipDuplicates=true] - 是否跳过重复规则
+   * @param {boolean} [options.enableRules=true] - 是否默认启用规则
+   * @param {boolean} [options.updateProxyImmediately=true] - 是否立即更新代理
+   * @returns {Promise<Object>} - 导入结果
+   */
+  static async parseAndImportRules (rulesText, groupId, options = {}) {
+    // 设置默认选项
+    const settings = {
+      skipDuplicates: true,
+      enableRules: true,
+      updateProxyImmediately: true,
+      ...options
+    };
+
+    if (!rulesText || !groupId) {
+      return {
+        success: false,
+        message: '规则文本或分组ID不能为空',
+        imported: 0,
+        skipped: 0,
+        errors: []
+      };
+    }
+
+    // 结果统计
+    const result = {
+      success: false,
+      imported: 0,
+      skipped: 0,
+      errors: [],
+      duplicates: [],
+      invalidRules: []
+    };
+
+    try {
+      // 获取当前分组
+      const hostsGroups = await this.getHostsGroups();
+      const groupIndex = hostsGroups.findIndex(g => g.id === groupId);
+
+      if (groupIndex === -1) {
+        return {
+          ...result,
+          message: '未找到指定的分组'
+        };
+      }
+
+      const group = hostsGroups[groupIndex];
+      const newHosts = [];
+
+      // 使用分块处理大量规则，避免阻塞UI
+      const processRulesBatch = async (lines, startIndex) => {
+        const batchSize = 100; // 每批处理100行
+        const endIndex = Math.min(startIndex + batchSize, lines.length);
+
+        for (let i = startIndex; i < endIndex; i++) {
+          const line = lines[i].trim();
 
           // 跳过空行和注释
           if (!line || line.startsWith('#')) {
-            skipped++;
-            return;
+            result.skipped++;
+            continue;
           }
 
           // 解析规则
-          const parts = line.split(/\s+/);
-          if (parts.length >= 2) {
-            const ip = parts[0];
-            const domain = parts[1];
+          const parsedRule = parseHostRule(line);
 
-            // 验证IP格式（简单验证）
-            const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-            if (ipRegex.test(ip)) {
-              // 检查是否已存在
-              const exists = group.hosts.some(h => h.ip === ip && h.domain === domain);
-              if (!exists) {
-                newHosts.push({
-                  id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-                  ip,
-                  domain,
-                  enabled: true
-                });
-                imported++;
-              } else {
-                skipped++;
-              }
+          if (!parsedRule) {
+            result.skipped++;
+            result.invalidRules.push({ line, index: i + 1, reason: '格式无效' });
+            continue;
+          }
+
+          const { ip, domain } = parsedRule;
+
+          // 检查是否已存在
+          const exists = group.hosts.some(h => h.ip === ip && h.domain === domain);
+
+          if (exists) {
+            if (settings.skipDuplicates) {
+              result.skipped++;
+              result.duplicates.push({ ip, domain, index: i + 1 });
             } else {
-              skipped++;
+              // 找到重复规则并更新
+              const hostIndex = group.hosts.findIndex(h => h.ip === ip && h.domain === domain);
+              if (hostIndex !== -1) {
+                // 仅更新启用状态
+                group.hosts[hostIndex].enabled = settings.enableRules;
+                result.imported++;
+              }
             }
           } else {
-            skipped++;
-          }
-        });
-
-        // 添加新的hosts条目
-        if (newHosts.length > 0) {
-          group.hosts.push(...newHosts);
-          chrome.storage.local.set({ hostsGroups }, () => {
-            // 发送消息到后台脚本更新代理设置
-            this.updateProxySettings().then(() => {
-              resolve({ success: true, imported, skipped });
+            // 创建新规则
+            newHosts.push({
+              id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+              ip,
+              domain,
+              enabled: settings.enableRules
             });
-          });
-        } else {
-          resolve({ success: true, imported, skipped });
+            result.imported++;
+          }
         }
-      });
+
+        // 处理下一批，如果还有
+        if (endIndex < lines.length) {
+          // 异步处理下一批，避免阻塞UI
+          await new Promise(resolve => setTimeout(resolve, 0));
+          return processRulesBatch(lines, endIndex);
+        }
+
+        return;
+      };
+
+      // 分割规则行并处理第一批
+      const lines = rulesText.split('\n');
+      await processRulesBatch(lines, 0);
+
+      // 添加新的hosts条目
+      if (newHosts.length > 0) {
+        group.hosts.push(...newHosts);
+        await this.saveHostsGroups(hostsGroups);
+
+        // 是否立即更新代理设置
+        if (settings.updateProxyImmediately) {
+          await this.updateProxySettings().catch(error => {
+            console.warn('导入后更新代理设置失败:', error);
+            // 忽略错误，不影响导入结果
+          });
+        }
+      }
+
+      // 设置结果
+      result.success = true;
+
+      // 添加详细信息
+      if (result.duplicates.length > 0) {
+        result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过，包含 ${result.duplicates.length} 条重复规则`;
+      } else if (result.invalidRules.length > 0) {
+        result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过，包含 ${result.invalidRules.length} 条无效规则`;
+      } else {
+        result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过`;
+      }
+
+      return result;
+    } catch (error) {
+      console.error('解析并导入规则失败:', error);
+      return {
+        ...result,
+        success: false,
+        message: `导入失败: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * 导出规则
+   * 将指定分组或所有分组的规则导出为文本
+   * @param {string} [groupId] - 分组ID，不指定则导出所有分组
+   * @param {object} [options] - 导出选项
+   * @param {boolean} [options.includeDisabled=false] - 是否包含已禁用的规则
+   * @param {boolean} [options.includeGroupHeaders=true] - 是否包含分组标题
+   * @param {boolean} [options.includeComments=true] - 是否包含注释
+   * @returns {Promise<string>} - 导出的规则文本
+   */
+  static async exportRules (groupId, options = {}) {
+    // 设置默认选项
+    const settings = {
+      includeDisabled: false,
+      includeGroupHeaders: true,
+      includeComments: true,
+      ...options
+    };
+
+    try {
+      const hostsGroups = await this.getHostsGroups();
+      let output = '';
+
+      // 添加注释头
+      if (settings.includeComments) {
+        const date = new Date().toISOString().split('T')[0];
+        output += `# Hosts Manager - 导出的规则\n`;
+        output += `# 导出日期: ${date}\n\n`;
+      }
+
+      // 确定要导出的分组
+      let groupsToExport = [];
+
+      if (groupId) {
+        // 导出指定分组
+        const group = hostsGroups.find(g => g.id === groupId);
+        if (group) {
+          groupsToExport = [group];
+        } else {
+          throw new Error('未找到指定的分组');
+        }
+      } else {
+        // 导出所有分组
+        groupsToExport = hostsGroups;
+      }
+
+      // 处理每个分组
+      for (const group of groupsToExport) {
+        // 添加分组标题
+        if (settings.includeGroupHeaders) {
+          output += `# ${group.name}\n`;
+        }
+
+        // 过滤和排序主机规则
+        const hosts = [...group.hosts];
+
+        // 按域名排序
+        hosts.sort((a, b) => a.domain.localeCompare(b.domain));
+
+        // 处理每条规则
+        for (const host of hosts) {
+          // 如果设置不包含禁用规则，则跳过
+          if (!settings.includeDisabled && !host.enabled) {
+            continue;
+          }
+
+          // 添加注释标记已禁用的规则
+          if (!host.enabled && settings.includeComments) {
+            output += `# 已禁用: `;
+          }
+
+          // 添加规则
+          output += `${host.ip} ${host.domain}\n`;
+        }
+
+        // 分组之间添加空行
+        output += '\n';
+      }
+
+      return output;
+    } catch (error) {
+      console.error('导出规则失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 获取主机组
+   * @returns {Promise<Array>} - 主机组数组
+   * @private
+   */
+  static async getHostsGroups () {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.get(['hostsGroups'], (result) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(`获取主机组失败: ${chrome.runtime.lastError.message}`));
+            return;
+          }
+
+          resolve(result.hostsGroups || []);
+        });
+      } catch (error) {
+        reject(new Error(`获取主机组失败: ${error.message}`));
+      }
+    });
+  }
+
+  /**
+   * 保存主机组
+   * @param {Array} hostsGroups - 主机组数组
+   * @returns {Promise<void>}
+   * @private
+   */
+  static async saveHostsGroups (hostsGroups) {
+    return new Promise((resolve, reject) => {
+      try {
+        chrome.storage.local.set({ hostsGroups }, () => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(`保存主机组失败: ${chrome.runtime.lastError.message}`));
+            return;
+          }
+
+          resolve();
+        });
+      } catch (error) {
+        reject(new Error(`保存主机组失败: ${error.message}`));
+      }
     });
   }
 }
