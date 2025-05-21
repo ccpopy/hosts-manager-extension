@@ -12,7 +12,7 @@
   <a href="https://github.com/ccpopy/hosts-manager-extension/issues"><img src="https://img.shields.io/github/issues/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub issues"></a>
   <a href="https://github.com/ccpopy/hosts-manager-extension/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ccpopy/hosts-manager-extension?style=flat-square" alt="License"></a>
   <a href="https://chromewebstore.google.com/detail/hosts-manager/ekofkbkmenfagdkijaplfbdcdnlddjod" target="_blank"><img src="https://img.shields.io/chrome-web-store/v/ekofkbkmenfagdkijaplfbdcdnlddjod?style=flat-square" alt="Chrome Web Store Version"></a>
-  <a href="https://microsoftedge.microsoft.com/addons/detail/hosts-manager/kdfieneakcjfaiglimggmamepimpklkj" target="_blank"><img src="https://img.shields.io/badge/dynamic/json?label=Edge%20Addons&prefix=v&query=$.version&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/apeejdinnfjjlajmihbpojcapdkghbki&style=flat-square&color=0078D7" alt="Edge 拓展"></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/hosts-manager/apeejdinnfjjlajmihbpojcapdkghbki" target="_blank"><img src="https://img.shields.io/badge/dynamic/json?label=Edge%20Addons&prefix=v&query=$.version&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/apeejdinnfjjlajmihbpojcapdkghbki&style=flat-square&color=0078D7" alt="Edge 拓展"></a>
 </p>
 
 ## 🎯 功能特点
