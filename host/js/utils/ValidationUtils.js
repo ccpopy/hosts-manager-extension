@@ -4,42 +4,79 @@
  */
 
 /**
- * 验证 IPv4 地址格式，检查每个段的数值范围
- * @param {string} ip - IP 地址
+ * 验证 IPv4 地址格式（支持带端口号）
+ * @param {string} ip - IP 地址，可能包含端口号
  * @returns {boolean} - 是否合法
  */
 export function isValidIp (ip) {
   if (!ip || typeof ip !== 'string') return false;
 
-  // 基本格式检查
+  // 分离IP和端口
+  let ipPart = ip;
+  let portPart = null;
+
+  if (ip.includes(':')) {
+    const parts = ip.split(':');
+    if (parts.length !== 2) return false;
+    ipPart = parts[0];
+    portPart = parts[1];
+  }
+
+  // 验证IP部分
   const ipRegex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
-  const match = ip.match(ipRegex);
+  const match = ipPart.match(ipRegex);
 
   if (!match) return false;
 
   // 检查每个段是否在有效范围 (0-255)
-  return match.slice(1).every(segment => {
+  const validIp = match.slice(1).every(segment => {
     const num = parseInt(segment, 10);
     return num >= 0 && num <= 255;
   });
+
+  if (!validIp) return false;
+
+  // 如果有端口，验证端口
+  if (portPart !== null) {
+    return isValidPort(portPart);
+  }
+
+  return true;
 }
 
 /**
- * 验证 IPv6 地址格式
+ * 验证 IPv6 地址格式（支持带端口号）
  * @param {string} ip - IPv6 地址
  * @returns {boolean} - 是否合法
  */
 export function isValidIpv6 (ip) {
   if (!ip || typeof ip !== 'string') return false;
 
+  // IPv6 地址如果包含端口，格式应该是 [ipv6]:port
+  let ipPart = ip;
+  let portPart = null;
+
+  if (ip.startsWith('[') && ip.includes(']:')) {
+    const endBracket = ip.indexOf(']:');
+    ipPart = ip.substring(1, endBracket);
+    portPart = ip.substring(endBracket + 2);
+  }
+
   // IPv6 地址验证正则
   const ipv6Regex = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}$|^[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}$|^[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,4}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){0,2}[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,3}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){0,3}[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:){0,2}[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){0,4}[0-9a-fA-F]{1,4}::(?:[0-9a-fA-F]{1,4}:)?[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{1,4}::[0-9a-fA-F]{1,4}$|^(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}::$/;
 
-  return ipv6Regex.test(ip);
+  if (!ipv6Regex.test(ipPart)) return false;
+
+  // 如果有端口，验证端口
+  if (portPart !== null) {
+    return isValidPort(portPart);
+  }
+
+  return true;
 }
 
 /**
- * 验证任意 IP 地址 (IPv4 或 IPv6)
+ * 验证任意 IP 地址 (IPv4 或 IPv6，支持端口号)
  * @param {string} ip - IP 地址
  * @returns {boolean} - 是否合法
  */
@@ -138,7 +175,7 @@ export function isValidPort (port) {
 
 /**
  * 验证主机规则
- * @param {string} ip - IP地址
+ * @param {string} ip - IP地址（可能包含端口号）
  * @param {string} domain - 域名
  * @returns {boolean} - 是否合法
  */
@@ -177,7 +214,7 @@ export function isValidSocksProxy (proxy) {
 
 /**
  * 从文本解析主机规则
- * @param {string} text - 规则文本，格式为 "IP域名"
+ * @param {string} text - 规则文本，格式为 "IP域名" 或 "IP:端口 域名"
  * @returns {object|null} - 解析结果 {ip, domain} 或 null（如果无效）
  */
 export function parseHostRule (text) {
@@ -245,7 +282,13 @@ export function parseBatchRules (batchText) {
  * @returns {boolean} - 是否在范围内
  */
 export function isIpInRange (ip, networkMask) {
-  if (!isValidIp(ip)) return false;
+  // 如果IP包含端口，先分离
+  let ipPart = ip;
+  if (ip.includes(':')) {
+    ipPart = ip.split(':')[0];
+  }
+
+  if (!isValidIp(ipPart)) return false;
 
   const parts = networkMask.split('/');
   if (parts.length !== 2) return false;
@@ -266,7 +309,7 @@ export function isIpInRange (ip, networkMask) {
       parseInt(parts[3], 10)) >>> 0;
   }
 
-  const ipInt = ipToInt(ip);
+  const ipInt = ipToInt(ipPart);
   const networkIpInt = ipToInt(networkIp);
   const mask = ~(0xFFFFFFFF >>> maskBits);
 
@@ -275,11 +318,20 @@ export function isIpInRange (ip, networkMask) {
 
 /**
  * 格式化IP地址（验证并标准化）
- * @param {string} ip - IP地址
+ * @param {string} ip - IP地址（可能包含端口号）
  * @returns {string|null} - 格式化后的IP或null（如果无效）
  */
 export function formatIp (ip) {
   if (!isValidIp(ip)) return null;
+
+  // 分离IP和端口
+  if (ip.includes(':')) {
+    const parts = ip.split(':');
+    const ipPart = parts[0].split('.')
+      .map(part => parseInt(part, 10).toString())
+      .join('.');
+    return `${ipPart}:${parts[1]}`;
+  }
 
   return ip.split('.')
     .map(part => parseInt(part, 10).toString())
@@ -299,7 +351,7 @@ export function formatDomain (domain) {
 
 /**
  * 规范化主机规则
- * @param {string} ip - IP地址
+ * @param {string} ip - IP地址（可能包含端口号）
  * @param {string} domain - 域名
  * @returns {object|null} - 规范化的 {ip, domain} 或 null（如果无效）
  */
@@ -315,4 +367,28 @@ export function normalizeHostRule (ip, domain) {
   }
 
   return null;
+}
+
+/**
+ * 解析IP地址和端口
+ * @param {string} ipWithPort - IP地址（可能包含端口号）
+ * @returns {object} - {ip, port} 或 {ip, port: null}
+ */
+export function parseIpAndPort (ipWithPort) {
+  if (!ipWithPort || typeof ipWithPort !== 'string') {
+    return { ip: null, port: null };
+  }
+
+  if (ipWithPort.includes(':')) {
+    const parts = ipWithPort.split(':');
+    if (parts.length === 2) {
+      const port = parseInt(parts[1], 10);
+      return {
+        ip: parts[0],
+        port: isNaN(port) ? null : port
+      };
+    }
+  }
+
+  return { ip: ipWithPort, port: null };
 }
