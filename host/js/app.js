@@ -372,7 +372,7 @@ export default class App {
       <span>Hosts 配置</span>
     `;
 
-    // 批量导入菜单项
+    // Hosts 批处理菜单项
     const batchImportMenuItem = document.createElement('div');
     batchImportMenuItem.className = 'menu-item' + (this.currentPage === 'import' ? ' active' : '');
     batchImportMenuItem.dataset.tab = 'import';
@@ -380,7 +380,7 @@ export default class App {
       <svg class="menu-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M4 4a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-5L9 2H4z" clip-rule="evenodd"/>
       </svg>
-      <span>批量导入</span>
+      <span>Hosts 批处理</span>
     `;
 
     // Socket代理菜单项
