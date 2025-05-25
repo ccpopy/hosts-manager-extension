@@ -264,7 +264,7 @@ function updateDeclarativeNetRequestRules () {
                 },
                 condition: {
                   regexFilter: `^${protocol}://${escapeRegExp(domain)}(:[0-9]+)?(/.*)?$`,
-                  resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'fetch', 'websocket']
+                  resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'other', 'websocket']
                 }
               };
 
