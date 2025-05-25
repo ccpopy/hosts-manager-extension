@@ -293,7 +293,14 @@ export default class App {
 
     const versionInfo = document.createElement('span');
     versionInfo.className = 'version-info';
-    versionInfo.textContent = 'v1.0.3';
+    // 安全地读取版本号，如果获取失败则使用默认值
+    try {
+      const manifest = chrome.runtime.getManifest();
+      versionInfo.textContent = `v${manifest.version || '1.0.0'}`;
+    } catch (error) {
+      console.warn('获取版本信息失败:', error);
+      versionInfo.textContent = 'v1.0.0';
+    }
     versionInfo.style.fontSize = '12px';
     versionInfo.style.marginLeft = '8px';
     versionInfo.style.color = 'var(--gray-500)';

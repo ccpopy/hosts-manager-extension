@@ -21,74 +21,148 @@ const proxyState = {
 // declarativeNetRequest rule management
 const RULE_MANAGEMENT = {
   RULE_ID_START: 1,
-  RULE_ID_MAX: 30000, // Chrome extension rule limit
+  // Chrome extension rule limit
+  RULE_ID_MAX: 30000,
   currentRuleId: 1,
   activeRuleIds: new Set(),
+  updating: false,
 };
 
 /**
  * Initialize extension
  */
+/**
+ * Initialize extension
+ */
 function initializeExtension () {
-  // Get stored groups and active groups
-  chrome.storage.local.get(['hostsGroups', 'activeGroups'], (result) => {
-    // If there are no groups, create default groups
-    if (!result.hostsGroups) {
-      const defaultGroups = [
-        {
-          id: 'default',
-          name: 'Default Group',
-          hosts: [],
-          enabled: true
-        }
-      ];
-      chrome.storage.local.set({ hostsGroups: defaultGroups })
-        .catch(error => console.error('Failed to initialize default grouping:', error));
-    }
+  // Clean up all existing rules on initialization
+  clearAllHostsRules()
+    .then(() => {
+      // Get stored groups and active groups
+      chrome.storage.local.get(['hostsGroups', 'activeGroups'], (result) => {
+        try {
+          // If there are no groups, create default groups
+          if (!result.hostsGroups) {
+            const defaultGroups = [
+              {
+                id: 'default',
+                name: 'Default Group',
+                hosts: [],
+                enabled: true
+              }
+            ];
 
-    // If there are active groups, update mapping
-    if (result.activeGroups) {
-      activeGroups = result.activeGroups;
-      updateActiveHostsMap();
-    } else {
-      // Otherwise, activate all groups
-      chrome.storage.local.get(['hostsGroups'], (data) => {
-        if (data.hostsGroups) {
-          const allGroupIds = data.hostsGroups.map(group => group.id);
-          chrome.storage.local.set({ activeGroups: allGroupIds })
-            .then(() => {
-              activeGroups = allGroupIds;
-              updateActiveHostsMap();
-            })
-            .catch(error => console.error('Failed to activate all groups:', error));
+            chrome.storage.local.set({ hostsGroups: defaultGroups }).catch(error => {
+              console.error('Failed to initialize default grouping:', error);
+            });
+          }
+
+          // If there are active groups, update mapping
+          if (result.activeGroups && Array.isArray(result.activeGroups)) {
+            activeGroups = result.activeGroups;
+
+            // Delayed update mapping to ensure initialization is complete and avoid concurrency issues
+            setTimeout(() => {
+              updateActiveHostsMap().catch(error => {
+                console.error('Failed to update initial hosts mapping:', error);
+              });
+            }, 200);
+          } else {
+            // Otherwise, activate all groups
+            chrome.storage.local.get(['hostsGroups'], (data) => {
+              if (data.hostsGroups && Array.isArray(data.hostsGroups)) {
+                const allGroupIds = data.hostsGroups.map(group => group.id);
+
+                chrome.storage.local.set({ activeGroups: allGroupIds })
+                  .then(() => {
+                    activeGroups = allGroupIds;
+
+                    setTimeout(() => {
+                      updateActiveHostsMap().catch(error => {
+                        console.error('Failed to update all groups hosts mapping:', error);
+                      });
+                    }, 200);
+                  })
+                  .catch(error => {
+                    console.error('Failed to activate all groups:', error);
+                  });
+              } else {
+                console.log('No groups found to activate');
+              }
+            });
+          }
+        } catch (error) {
+          console.error('Error during groups initialization:', error);
         }
       });
-    }
-  });
+    })
+    .catch(error => {
+      chrome.storage.local.get(['hostsGroups', 'activeGroups'], (result) => {
+        console.warn('Proceeding with initialization despite rule clearing failure');
+
+        if (result.activeGroups && Array.isArray(result.activeGroups)) {
+          activeGroups = result.activeGroups;
+
+          setTimeout(() => {
+            updateActiveHostsMap()
+              .catch(error => {
+                console.error('Failed to update hosts mapping after failed cleanup:', error);
+              });
+          }, 500);
+        }
+      });
+    });
 
   // Adding a storage change listener
   chrome.storage.onChanged.addListener((changes) => {
-    if (changes.hostsGroups || changes.activeGroups) {
-      updateActiveHostsMap();
+    try {
+      if (changes.hostsGroups || changes.activeGroups) {
+        // Anti-shake updates to avoid frequent rule updates
+        if (updateActiveHostsMap.timeoutId) {
+          clearTimeout(updateActiveHostsMap.timeoutId);
+        }
+
+        updateActiveHostsMap.timeoutId = setTimeout(() => {
+          updateActiveHostsMap().catch(error => {
+            console.error('Failed to update hosts mapping due to storage change:', error);
+          });
+        }, 300);
+      }
+    } catch (error) {
+      console.error('Error in storage change listener:', error);
     }
   });
 
   // Adding a message listener
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'updateProxySettings') {
-      updateActiveHostsMap()
-        .then(() => {
-          if (sendResponse) {
-            sendResponse({ success: true });
-          }
-        })
-        .catch(error => {
-          console.error('Failed to process updateProxySettings message:', error);
-          if (sendResponse) {
-            sendResponse({ success: false, error: error.message });
-          }
+    try {
+      if (message.action === 'updateProxySettings') {
+        updateActiveHostsMap()
+          .then(() => {
+            if (sendResponse) {
+              sendResponse({ success: true });
+            }
+          })
+          .catch(error => {
+            console.error('Failed to process updateProxySettings message:', error);
+            if (sendResponse) {
+              sendResponse({
+                success: false,
+                error: error.message || 'Unknown error occurred'
+              });
+            }
+          });
+
+        return true;
+      }
+    } catch (error) {
+      console.error('Error in message listener:', error);
+      if (sendResponse) {
+        sendResponse({
+          success: false,
+          error: 'Message processing failed: ' + error.message
         });
-      return true;
+      }
     }
   });
 }
@@ -106,6 +180,7 @@ function updateActiveHostsMap () {
   }
 
   proxyState.updating = true;
+  proxyState.lastUpdateTime = Date.now();
 
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(['hostsGroups', 'activeGroups'])
@@ -221,6 +296,16 @@ function isEqual (obj1, obj2) {
  */
 function updateDeclarativeNetRequestRules () {
   return new Promise((resolve, reject) => {
+    // Prevent concurrent updates
+    if (RULE_MANAGEMENT.updating) {
+      setTimeout(() => {
+        updateDeclarativeNetRequestRules().then(resolve).catch(reject);
+      }, 500);
+      return;
+    }
+
+    RULE_MANAGEMENT.updating = true;
+
     try {
       // First, remove all existing rules
       clearAllHostsRules()
@@ -231,12 +316,14 @@ function updateDeclarativeNetRequestRules () {
 
           if (hostEntries.length === 0) {
             // No hosts to redirect
+            RULE_MANAGEMENT.updating = false;
             resolve();
             return;
           }
 
-          // Reset rule ID counter
+          // Reset rule ID counter and clear active rule IDs
           RULE_MANAGEMENT.currentRuleId = RULE_MANAGEMENT.RULE_ID_START;
+          RULE_MANAGEMENT.activeRuleIds.clear();
 
           hostEntries.forEach(domain => {
             const ip = activeHostsMap[domain];
@@ -278,20 +365,27 @@ function updateDeclarativeNetRequestRules () {
             chrome.declarativeNetRequest.updateDynamicRules({
               addRules: newRules
             }, () => {
+              RULE_MANAGEMENT.updating = false;
+
               if (chrome.runtime.lastError) {
                 console.error('Failed to add declarativeNetRequest rules:', chrome.runtime.lastError);
+                RULE_MANAGEMENT.activeRuleIds.clear();
                 reject(new Error(chrome.runtime.lastError.message));
               } else {
-                console.log(`Added ${newRules.length} declarativeNetRequest rules`);
                 resolve();
               }
             });
           } else {
+            RULE_MANAGEMENT.updating = false;
             resolve();
           }
         })
-        .catch(reject);
+        .catch(error => {
+          RULE_MANAGEMENT.updating = false;
+          reject(error);
+        });
     } catch (error) {
+      RULE_MANAGEMENT.updating = false;
       console.error('Error updating declarativeNetRequest rules:', error);
       reject(error);
     }
@@ -304,24 +398,53 @@ function updateDeclarativeNetRequestRules () {
  */
 function clearAllHostsRules () {
   return new Promise((resolve, reject) => {
-    if (RULE_MANAGEMENT.activeRuleIds.size === 0) {
-      resolve();
-      return;
-    }
-
-    const ruleIdsToRemove = Array.from(RULE_MANAGEMENT.activeRuleIds);
-
-    chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: ruleIdsToRemove
-    }, () => {
+    // Get all current dynamic rules
+    chrome.declarativeNetRequest.getDynamicRules((existingRules) => {
       if (chrome.runtime.lastError) {
-        console.error('Failed to remove declarativeNetRequest rules:', chrome.runtime.lastError);
+        console.error('Failed to get existing rules:', chrome.runtime.lastError);
         reject(new Error(chrome.runtime.lastError.message));
-      } else {
-        console.log(`Removed ${ruleIdsToRemove.length} declarativeNetRequest rules`);
+        return;
+      }
+
+      // If there are no existing rules, a direct solution
+      if (existingRules.length === 0 && RULE_MANAGEMENT.activeRuleIds.size === 0) {
         RULE_MANAGEMENT.activeRuleIds.clear();
         resolve();
+        return;
       }
+
+      // Collect all rule IDs to remove
+      const ruleIdsToRemove = new Set();
+
+      // Add existing rule IDs
+      existingRules.forEach(rule => {
+        ruleIdsToRemove.add(rule.id);
+      });
+
+      // Add active rule IDs
+      RULE_MANAGEMENT.activeRuleIds.forEach(id => {
+        ruleIdsToRemove.add(id);
+      });
+
+      if (ruleIdsToRemove.size === 0) {
+        RULE_MANAGEMENT.activeRuleIds.clear();
+        resolve();
+        return;
+      }
+
+      const ruleIdsArray = Array.from(ruleIdsToRemove);
+
+      chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: ruleIdsArray
+      }, () => {
+        if (chrome.runtime.lastError) {
+          console.error('Failed to remove declarativeNetRequest rules:', chrome.runtime.lastError);
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          RULE_MANAGEMENT.activeRuleIds.clear();
+          resolve();
+        }
+      });
     });
   });
 }
@@ -385,7 +508,6 @@ function updateProxySettings () {
 
         // Check if configuration has changed
         if (currentConfig && JSON.stringify(currentConfig) === JSON.stringify(config)) {
-          console.log('Proxy configuration has not changed, skipping update');
           return resolve();
         }
 
