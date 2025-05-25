@@ -1,6 +1,8 @@
 import StateService from '../services/StateService.js';
+import ProxyService from '../services/ProxyService.js';
 import { createNotice } from '../components/Notice.js';
 import { Message } from '../utils/MessageUtils.js';
+import { isValidIp, isValidDomain, isValidPort } from '../utils/ValidationUtils.js';
 
 export default class ProxyPage {
   /**
@@ -11,6 +13,7 @@ export default class ProxyPage {
     this.container = container;
     this.isSubmitting = false;
     this.formElement = null;
+    this.validationTimeouts = new Map();
 
     // 表单元素引用
     this.elements = {
@@ -58,7 +61,7 @@ export default class ProxyPage {
 
     // 提示信息
     const proxyNotice = createNotice(
-      '可选配置一个SOCKS代理，用于不匹配hosts规则的请求。支持用户名和密码认证。',
+      '可选配置一个SOCKS代理，用于不匹配hosts规则的请求。支持用户名和密码认证。hosts映射现在使用declarativeNetRequest API处理，代理仅用于其他流量。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -117,8 +120,13 @@ export default class ProxyPage {
     this.elements.hostInput = document.createElement('input');
     this.elements.hostInput.type = 'text';
     this.elements.hostInput.id = 'proxy-host';
-    this.elements.hostInput.placeholder = '例如: 127.0.0.1';
+    this.elements.hostInput.placeholder = '例如: 127.0.0.1 或 proxy.example.com';
     this.elements.hostInput.value = proxySettings.host || '';
+
+    // 添加实时验证
+    this.elements.hostInput.addEventListener('input', () => {
+      this.scheduleValidation('host', this.elements.hostInput);
+    });
 
     hostFormGroup.appendChild(hostLabel);
     hostFormGroup.appendChild(this.elements.hostInput);
@@ -138,6 +146,11 @@ export default class ProxyPage {
     this.elements.portInput.value = proxySettings.port || '';
     this.elements.portInput.min = '1';
     this.elements.portInput.max = '65535';
+
+    // 添加实时验证
+    this.elements.portInput.addEventListener('input', () => {
+      this.scheduleValidation('port', this.elements.portInput);
+    });
 
     portFormGroup.appendChild(portLabel);
     portFormGroup.appendChild(this.elements.portInput);
@@ -246,6 +259,11 @@ export default class ProxyPage {
     this.elements.usernameInput.placeholder = '输入用户名';
     this.elements.usernameInput.value = proxySettings.auth ? (proxySettings.auth.username || '') : '';
 
+    // 添加实时验证
+    this.elements.usernameInput.addEventListener('input', () => {
+      this.scheduleValidation('username', this.elements.usernameInput);
+    });
+
     usernameFormGroup.appendChild(usernameLabel);
     usernameFormGroup.appendChild(this.elements.usernameInput);
     authForm.appendChild(usernameFormGroup);
@@ -265,12 +283,33 @@ export default class ProxyPage {
     this.elements.passwordInput.placeholder = '输入密码';
     this.elements.passwordInput.value = proxySettings.auth ? (proxySettings.auth.password || '') : '';
 
+    // 添加实时验证
+    this.elements.passwordInput.addEventListener('input', () => {
+      this.scheduleValidation('password', this.elements.passwordInput);
+    });
+
     passwordFormGroup.appendChild(passwordLabel);
     passwordFormGroup.appendChild(this.elements.passwordInput);
     authForm.appendChild(passwordFormGroup);
 
     authSection.appendChild(authForm);
     formContainer.appendChild(authSection);
+
+    // 测试连接按钮
+    const testSection = document.createElement('div');
+    testSection.className = 'form-section';
+    testSection.style.marginTop = '24px';
+
+    const testButton = document.createElement('button');
+    testButton.type = 'button';
+    testButton.className = 'button button-default';
+    testButton.textContent = '测试连接';
+    testButton.addEventListener('click', () => {
+      this.testProxyConnection();
+    });
+
+    testSection.appendChild(testButton);
+    formContainer.appendChild(testSection);
 
     // 保存按钮
     const formActions = document.createElement('div');
@@ -292,6 +331,129 @@ export default class ProxyPage {
   }
 
   /**
+   * 安排验证（防抖）
+   * @param {string} field - 字段名
+   * @param {HTMLElement} input - 输入元素
+   */
+  scheduleValidation (field, input) {
+    // 清除之前的定时器
+    if (this.validationTimeouts.has(field)) {
+      clearTimeout(this.validationTimeouts.get(field));
+    }
+
+    // 设置新的定时器
+    const timeoutId = setTimeout(() => {
+      this.validateField(field, input);
+      this.validationTimeouts.delete(field);
+    }, 500);
+
+    this.validationTimeouts.set(field, timeoutId);
+  }
+
+  /**
+   * 验证单个字段
+   * @param {string} field - 字段名
+   * @param {HTMLElement} input - 输入元素
+   */
+  validateField (field, input) {
+    const value = input.value.trim();
+    let isValid = true;
+    let errorMessage = '';
+
+    switch (field) {
+      case 'host':
+        if (value && !isValidIp(value) && !isValidDomain(value)) {
+          isValid = false;
+          errorMessage = '请输入有效的IP地址或域名';
+        }
+        break;
+      case 'port':
+        if (value && !isValidPort(value)) {
+          isValid = false;
+          errorMessage = '端口必须是1-65535之间的数字';
+        }
+        break;
+      case 'username':
+        if (this.elements.authEnabledCheckbox.checked && this.elements.enabledCheckbox.checked && !value) {
+          isValid = false;
+          errorMessage = '启用认证时用户名不能为空';
+        }
+        break;
+      case 'password':
+        if (this.elements.authEnabledCheckbox.checked && this.elements.enabledCheckbox.checked && !value) {
+          isValid = false;
+          errorMessage = '启用认证时密码不能为空';
+        }
+        break;
+    }
+
+    // 更新输入框样式
+    if (value) {
+      if (isValid) {
+        input.style.borderColor = 'var(--success-color)';
+        input.title = '';
+      } else {
+        input.style.borderColor = 'var(--error-color)';
+        input.title = errorMessage;
+      }
+    } else {
+      input.style.borderColor = '';
+      input.title = '';
+    }
+  }
+
+  /**
+   * 测试代理连接
+   */
+  async testProxyConnection () {
+    const host = this.elements.hostInput ? this.elements.hostInput.value.trim() : '';
+    const port = this.elements.portInput ? this.elements.portInput.value.trim() : '';
+
+    if (!host || !port) {
+      Message.error('请先填写代理主机和端口');
+      return;
+    }
+
+    if (!isValidIp(host) && !isValidDomain(host)) {
+      Message.error('代理主机格式无效');
+      return;
+    }
+
+    if (!isValidPort(port)) {
+      Message.error('代理端口格式无效');
+      return;
+    }
+
+    try {
+      Message.info('正在测试代理连接...');
+
+      // 创建临时代理配置进行验证
+      const testConfig = {
+        host,
+        port,
+        enabled: true,
+        auth: {
+          enabled: this.elements.authEnabledCheckbox.checked,
+          username: this.elements.usernameInput.value.trim(),
+          password: this.elements.passwordInput.value.trim()
+        }
+      };
+
+      // 使用ProxyService验证配置
+      const validation = ProxyService.validateProxyConfig(testConfig);
+
+      if (validation.valid) {
+        Message.success('代理配置验证通过！注意：这只是格式验证，实际连通性需要保存后测试。');
+      } else {
+        Message.error('代理配置验证失败：' + validation.message);
+      }
+    } catch (error) {
+      console.error('测试代理连接失败:', error);
+      Message.error('测试连接失败：' + error.message);
+    }
+  }
+
+  /**
    * 根据启用状态更新表单
    */
   updateFormState () {
@@ -307,6 +469,8 @@ export default class ProxyPage {
         this.elements.hostInput.setAttribute('required', 'required');
       } else {
         this.elements.hostInput.removeAttribute('required');
+        this.elements.hostInput.style.borderColor = '';
+        this.elements.hostInput.title = '';
       }
     }
 
@@ -317,6 +481,8 @@ export default class ProxyPage {
         this.elements.portInput.setAttribute('required', 'required');
       } else {
         this.elements.portInput.removeAttribute('required');
+        this.elements.portInput.style.borderColor = '';
+        this.elements.portInput.title = '';
       }
     }
 
@@ -346,6 +512,8 @@ export default class ProxyPage {
         this.elements.usernameInput.setAttribute('required', 'required');
       } else {
         this.elements.usernameInput.removeAttribute('required');
+        this.elements.usernameInput.style.borderColor = '';
+        this.elements.usernameInput.title = '';
       }
     }
 
@@ -356,6 +524,8 @@ export default class ProxyPage {
         this.elements.passwordInput.setAttribute('required', 'required');
       } else {
         this.elements.passwordInput.removeAttribute('required');
+        this.elements.passwordInput.style.borderColor = '';
+        this.elements.passwordInput.title = '';
       }
     }
   }
@@ -407,40 +577,22 @@ export default class ProxyPage {
         }
       };
 
-      // 验证
-      if (enabled) {
-        // 验证主机和端口
-        if (!host) {
-          Message.error('代理主机不能为空');
-          return;
-        }
-
-        if (!port) {
-          Message.error('代理端口不能为空');
-          return;
-        }
-
-        const portNum = parseInt(port, 10);
-        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-          Message.error('代理端口必须是1-65535之间的数字');
-          return;
-        }
-
-        // 验证认证信息
-        if (authEnabled && (!username || !password)) {
-          Message.error('启用认证时必须提供用户名和密码');
-          return;
-        }
+      // 使用ProxyService验证配置
+      const validation = ProxyService.validateProxyConfig(proxyConfig);
+      if (!validation.valid) {
+        Message.error(validation.message);
+        return;
       }
 
       // 更新代理设置
-      await StateService.updateSocketProxy(proxyConfig);
+      const success = await StateService.updateSocketProxy(proxyConfig);
 
-      // 更新代理
-      await this.updateProxySettings();
-
-      // 显示成功消息
-      Message.success('代理设置已保存并应用');
+      if (success) {
+        // 显示成功消息
+        Message.success('代理设置已保存并应用，网络请求规则已更新');
+      } else {
+        Message.error('保存代理设置失败，请重试');
+      }
     } catch (error) {
       console.error('保存代理设置失败:', error);
       Message.error(`保存设置失败: ${error.message}`);
@@ -451,18 +603,6 @@ export default class ProxyPage {
         saveButton.textContent = '保存设置';
       }
       this.isSubmitting = false;
-    }
-  }
-
-  /**
-   * 更新代理设置
-   */
-  async updateProxySettings () {
-    try {
-      return await StateService.updateProxySettings();
-    } catch (error) {
-      console.error('更新代理设置失败:', error);
-      throw error;
     }
   }
 
@@ -511,6 +651,11 @@ export default class ProxyPage {
     // 创建错误容器
     const errorContainer = document.createElement('div');
     errorContainer.className = 'page-error-container';
+    errorContainer.style.textAlign = 'center';
+    errorContainer.style.padding = '64px 20px';
+    errorContainer.style.color = 'var(--error-dark)';
+    errorContainer.style.backgroundColor = 'var(--error-light)';
+    errorContainer.style.borderRadius = 'var(--rounded-xl)';
 
     // 错误图标
     const errorIcon = document.createElement('div');
@@ -552,6 +697,12 @@ export default class ProxyPage {
       if (this.unsubscribe) {
         this.unsubscribe();
       }
+
+      // 清除所有验证定时器
+      for (const [field, timeoutId] of this.validationTimeouts.entries()) {
+        clearTimeout(timeoutId);
+      }
+      this.validationTimeouts.clear();
 
       // 移除表单事件监听器
       if (this.formElement) {

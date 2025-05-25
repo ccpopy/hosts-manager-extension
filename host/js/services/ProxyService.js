@@ -7,7 +7,7 @@ import { parseHostRule, isValidIp, isValidDomain, normalizeHostRule } from '../u
 export default class ProxyService {
   /**
    * 更新代理设置
-   * 向后台脚本发送消息，更新Chrome代理配置
+   * 向后台脚本发送消息，更新Chrome代理配置和declarativeNetRequest规则
    * @returns {Promise<Object>} - 结果对象
    */
   static updateProxySettings () {
@@ -15,7 +15,7 @@ export default class ProxyService {
       try {
         const timeoutId = setTimeout(() => {
           reject(new Error('更新代理设置超时，后台脚本可能未响应'));
-        }, 5000); // 5秒超时
+        }, 10000);
 
         chrome.runtime.sendMessage({ action: 'updateProxySettings' }, (response) => {
           clearTimeout(timeoutId);
@@ -31,7 +31,7 @@ export default class ProxyService {
           }
 
           if (!response.success) {
-            reject(new Error(response.message || '代理更新失败'));
+            reject(new Error(response.error || '代理更新失败'));
             return;
           }
 
@@ -89,7 +89,6 @@ export default class ProxyService {
 
   /**
    * 解析并导入规则
-   * 更健壮的批量导入实现，提供详细的错误信息
    * @param {string} rulesText - 规则文本
    * @param {string} groupId - 分组ID
    * @param {object} [options] - 导入选项
@@ -144,7 +143,8 @@ export default class ProxyService {
 
       // 使用分块处理大量规则，避免阻塞UI
       const processRulesBatch = async (lines, startIndex) => {
-        const batchSize = 100; // 每批处理100行
+        //批处理大小
+        const batchSize = 50;
         const endIndex = Math.min(startIndex + batchSize, lines.length);
 
         for (let i = startIndex; i < endIndex; i++) {
@@ -167,16 +167,37 @@ export default class ProxyService {
 
           const { ip, domain } = parsedRule;
 
+          // 额外验证IP和域名格式
+          if (!isValidIp(ip)) {
+            result.skipped++;
+            result.invalidRules.push({ line, index: i + 1, reason: 'IP地址格式无效' });
+            continue;
+          }
+
+          if (!isValidDomain(domain)) {
+            result.skipped++;
+            result.invalidRules.push({ line, index: i + 1, reason: '域名格式无效' });
+            continue;
+          }
+
+          // 规范化规则
+          const normalized = normalizeHostRule(ip, domain);
+          if (!normalized) {
+            result.skipped++;
+            result.invalidRules.push({ line, index: i + 1, reason: '规则规范化失败' });
+            continue;
+          }
+
           // 检查是否已存在
-          const exists = group.hosts.some(h => h.ip === ip && h.domain === domain);
+          const exists = group.hosts.some(h => h.ip === normalized.ip && h.domain === normalized.domain);
 
           if (exists) {
             if (settings.skipDuplicates) {
               result.skipped++;
-              result.duplicates.push({ ip, domain, index: i + 1 });
+              result.duplicates.push({ ip: normalized.ip, domain: normalized.domain, index: i + 1 });
             } else {
               // 找到重复规则并更新
-              const hostIndex = group.hosts.findIndex(h => h.ip === ip && h.domain === domain);
+              const hostIndex = group.hosts.findIndex(h => h.ip === normalized.ip && h.domain === normalized.domain);
               if (hostIndex !== -1) {
                 // 仅更新启用状态
                 group.hosts[hostIndex].enabled = settings.enableRules;
@@ -187,8 +208,7 @@ export default class ProxyService {
             // 创建新规则
             newHosts.push({
               id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-              ip,
-              domain,
+              ...normalized,
               enabled: settings.enableRules
             });
             result.imported++;
@@ -198,7 +218,7 @@ export default class ProxyService {
         // 处理下一批，如果还有
         if (endIndex < lines.length) {
           // 异步处理下一批，避免阻塞UI
-          await new Promise(resolve => setTimeout(resolve, 0));
+          await new Promise(resolve => setTimeout(resolve, 10));
           return processRulesBatch(lines, endIndex);
         }
 
@@ -214,12 +234,15 @@ export default class ProxyService {
         group.hosts.push(...newHosts);
         await this.saveHostsGroups(hostsGroups);
 
-        // 是否立即更新代理设置
+        // 是否立即更新代理设置和declarativeNetRequest规则
         if (settings.updateProxyImmediately) {
-          await this.updateProxySettings().catch(error => {
+          try {
+            await this.updateProxySettings();
+          } catch (error) {
             console.warn('导入后更新代理设置失败:', error);
-            // 忽略错误，不影响导入结果
-          });
+            // 不影响导入结果，但在错误数组中记录
+            result.errors.push(`更新代理设置失败: ${error.message}`);
+          }
         }
       }
 
@@ -233,6 +256,11 @@ export default class ProxyService {
         result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过，包含 ${result.invalidRules.length} 条无效规则`;
       } else {
         result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过`;
+      }
+
+      // 如果有错误但导入成功，添加到消息中
+      if (result.errors.length > 0) {
+        result.message += `（存在 ${result.errors.length} 个警告）`;
       }
 
       return result;
@@ -273,7 +301,7 @@ export default class ProxyService {
       if (settings.includeComments) {
         const date = new Date().toISOString().split('T')[0];
         output += `# Hosts Manager - 导出的规则\n`;
-        output += `# 导出日期: ${date}\n\n`;
+        output += `# 导出日期: ${date}\n`;
       }
 
       // 确定要导出的分组
@@ -330,6 +358,90 @@ export default class ProxyService {
       console.error('导出规则失败:', error);
       throw error;
     }
+  }
+
+  /**
+   * 批量验证规则
+   * 在导入前验证所有规则的有效性
+   * @param {string} rulesText - 规则文本
+   * @returns {Promise<Object>} - 验证结果
+   */
+  static async validateBatchRules (rulesText) {
+    if (!rulesText || typeof rulesText !== 'string') {
+      return {
+        valid: 0,
+        invalid: 0,
+        errors: [],
+        warnings: []
+      };
+    }
+
+    const lines = rulesText.split('\n');
+    const result = {
+      valid: 0,
+      invalid: 0,
+      errors: [],
+      warnings: []
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      const lineNumber = i + 1;
+
+      // 跳过空行和注释
+      if (!line || line.startsWith('#')) {
+        continue;
+      }
+
+      const parsedRule = parseHostRule(line);
+
+      if (!parsedRule) {
+        result.invalid++;
+        result.errors.push({
+          line: lineNumber,
+          content: line,
+          error: '规则格式无效'
+        });
+        continue;
+      }
+
+      const { ip, domain } = parsedRule;
+
+      // 验证IP
+      if (!isValidIp(ip)) {
+        result.invalid++;
+        result.errors.push({
+          line: lineNumber,
+          content: line,
+          error: 'IP地址格式无效'
+        });
+        continue;
+      }
+
+      // 验证域名
+      if (!isValidDomain(domain)) {
+        result.invalid++;
+        result.errors.push({
+          line: lineNumber,
+          content: line,
+          error: '域名格式无效'
+        });
+        continue;
+      }
+
+      // 检查是否为特殊域名
+      if (domain.includes('localhost') || domain.includes('127.0.0.1')) {
+        result.warnings.push({
+          line: lineNumber,
+          content: line,
+          warning: '本地地址可能不需要代理'
+        });
+      }
+
+      result.valid++;
+    }
+
+    return result;
   }
 
   /**

@@ -33,12 +33,19 @@ class StateService {
     // 节流控制
     this.saveThrottleTimeout = null;
     // 单位：毫秒
-    this.THROTTLE_DELAY = 300;
+    this.THROTTLE_DELAY = 500;
 
     // 搜索索引 - 用于优化搜索性能
     this.searchIndex = {
       domains: new Map(), // domain -> [groupId, hostId][]
       ips: new Map()      // ip -> [groupId, hostId][]
+    };
+
+    // declarativeNetRequest相关状态
+    this.declarativeNetRequestState = {
+      updating: false,
+      lastUpdateTime: 0,
+      updateCount: 0
     };
   }
 
@@ -227,22 +234,46 @@ class StateService {
   }
 
   /**
-   * 更新代理设置
+   * 更新代理设置和declarativeNetRequest规则
    * @returns {Promise<void>}
    */
   updateProxySettings () {
     return new Promise((resolve, reject) => {
       try {
+        // 防止过于频繁的更新
+        const now = Date.now();
+        if (this.declarativeNetRequestState.updating) {
+          // 如果正在更新，等待一段时间后重试
+          setTimeout(() => {
+            this.updateProxySettings().then(resolve).catch(reject);
+          }, 200);
+          return;
+        }
+
+        this.declarativeNetRequestState.updating = true;
+        this.declarativeNetRequestState.lastUpdateTime = now;
+        this.declarativeNetRequestState.updateCount++;
+
+        // 超时处理，因为declarativeNetRequest可能需要更多时间
+        const timeoutId = setTimeout(() => {
+          this.declarativeNetRequestState.updating = false;
+          reject(new Error('更新代理设置和规则超时'));
+        }, 15000);
+
         chrome.runtime.sendMessage({ action: 'updateProxySettings' }, response => {
+          clearTimeout(timeoutId);
+          this.declarativeNetRequestState.updating = false;
+
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
           } else if (response && !response.success) {
-            reject(new Error(response.message || '更新代理设置失败'));
+            reject(new Error(response.error || '更新代理设置失败'));
           } else {
             resolve();
           }
         });
       } catch (error) {
+        this.declarativeNetRequestState.updating = false;
         reject(error);
       }
     });
@@ -335,10 +366,9 @@ class StateService {
     }
 
     try {
-      await this.saveState();
+      await this.saveState(true);
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.hostsGroups.pop();
       if (active) {
         this.state.activeGroups = this.state.activeGroups.filter(id => id !== group.id);
@@ -374,7 +404,6 @@ class StateService {
       await this.saveState();
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.hostsGroups[index] = originalGroup;
       console.error('更新分组失败:', error);
       return false;
@@ -396,11 +425,10 @@ class StateService {
     this.state.activeGroups = this.state.activeGroups.filter(id => id !== groupId);
 
     try {
-      // 立即保存，不使用节流
+      // 立即保存，不使用节流，因为需要立即更新declarativeNetRequest规则
       await this.saveState(true);
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.hostsGroups = originalGroups;
       this.state.activeGroups = originalActiveGroups;
       console.error('删除分组失败:', error);
@@ -428,10 +456,10 @@ class StateService {
     }
 
     try {
-      await this.saveState();
+      // 立即保存，因为需要立即更新declarativeNetRequest规则
+      await this.saveState(true);
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.activeGroups = originalActiveGroups;
       console.error('切换分组状态失败:', error);
       return false;
@@ -461,10 +489,10 @@ class StateService {
     group.hosts.push(host);
 
     try {
-      await this.saveState();
+      // 立即保存，因为需要立即更新declarativeNetRequest规则
+      await this.saveState(true);
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.hostsGroups[groupIndex].hosts = originalHosts;
       console.error('添加主机失败:', error);
       return false;
@@ -510,10 +538,11 @@ class StateService {
     const updatedHost = this.state.hostsGroups[groupIndex].hosts[hostIndex];
 
     try {
-      await this.saveState();
+      // 根据更新类型决定是否立即保存
+      const needsImmediateUpdate = updates.ip || updates.domain || updates.enabled !== undefined;
+      await this.saveState(needsImmediateUpdate);
       return updatedHost;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.hostsGroups[groupIndex].hosts[hostIndex] = originalHost;
       console.error('更新主机失败:', error);
       return null;
@@ -550,10 +579,10 @@ class StateService {
     this.state.hostsGroups[groupIndex].hosts = group.hosts.filter(h => h.id !== hostId);
 
     try {
-      await this.saveState(true); // 立即保存
+      // 立即保存，因为需要立即更新declarativeNetRequest规则
+      await this.saveState(true);
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.hostsGroups[groupIndex].hosts = originalHosts;
       console.error('删除主机失败:', error);
       return false;
@@ -581,10 +610,10 @@ class StateService {
     };
 
     try {
-      await this.saveState();
+      // 立即保存，因为代理设置更改需要立即生效
+      await this.saveState(true);
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.socketProxy = originalProxy;
       console.error('更新代理设置失败:', error);
       return false;
@@ -618,10 +647,9 @@ class StateService {
     };
 
     try {
-      await this.saveState();
+      await this.saveState(true);
       return true;
     } catch (error) {
-      // 发生错误时回滚状态
       this.state.socketProxy.auth = originalAuth;
       console.error('更新代理认证设置失败:', error);
       return false;
@@ -699,10 +727,11 @@ class StateService {
     // 如果有导入的规则，保存状态
     if (imported > 0) {
       try {
-        await this.saveState();
+        // 立即保存，因为需要立即更新declarativeNetRequest规则
+        await this.saveState(true);
         return { success: true, imported, skipped };
       } catch (error) {
-        // 发生错误时回滚状态
+
         this.state.hostsGroups[groupIndex].hosts = originalHosts;
         console.error('批量导入失败:', error);
         return {
@@ -837,11 +866,11 @@ class StateService {
   }
 
   /**
- * 强制刷新状态
- * 用于确保视图与实际状态同步
- * @param {boolean} [notifyListeners=true] - 是否通知监听器
- * @returns {Promise<void>}
- */
+   * 强制刷新状态
+   * 用于确保视图与实际状态同步
+   * @param {boolean} [notifyListeners=true] - 是否通知监听器
+   * @returns {Promise<void>}
+   */
   async forceRefresh (notifyListeners = true) {
     try {
       // 重新从存储获取最新状态
@@ -878,10 +907,10 @@ class StateService {
   }
 
   /**
- * 检查主机是否存在于任何分组中
- * @param {string} hostId - 主机ID
- * @returns {boolean} - 是否存在
- */
+   * 检查主机是否存在于任何分组中
+   * @param {string} hostId - 主机ID
+   * @returns {boolean} - 是否存在
+   */
   hasHost (hostId) {
     if (!hostId) return false;
 
@@ -947,6 +976,25 @@ class StateService {
     }
   }
 
+  /**
+   * 获取declarativeNetRequest状态
+   * @returns {object} declarativeNetRequest状态信息
+   */
+  getDeclarativeNetRequestState () {
+    return {
+      ...this.declarativeNetRequestState,
+      hostsCount: Object.keys(this.state.hostsGroups.reduce((acc, group) => {
+        if (this.state.activeGroups.includes(group.id)) {
+          group.hosts.forEach(host => {
+            if (host.enabled) {
+              acc[host.domain] = host.ip;
+            }
+          });
+        }
+        return acc;
+      }, {})).length
+    };
+  }
 }
 
 // 单例模式

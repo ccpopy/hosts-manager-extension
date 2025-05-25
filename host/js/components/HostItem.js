@@ -6,11 +6,11 @@ import StateService from '../services/StateService.js';
 import SearchService from '../services/SearchService.js';
 import Modal from './Modal.js';
 import { Message } from '../utils/MessageUtils.js';
-import { isValidIp, isValidDomain, normalizeHostRule } from '../utils/ValidationUtils.js';
+import { isValidIp, isValidDomain, normalizeHostRule, parseHostRule } from '../utils/ValidationUtils.js';
 import { debounce } from '../utils/PerformanceUtils.js';
 
 // 节流控制常量
-const THROTTLE_DELAY = 300; // 毫秒
+const THROTTLE_DELAY = 500;
 
 // 主机项计数器 - 用于生成唯一ID
 let hostItemCounter = 0;
@@ -31,6 +31,17 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
     errorEl.className = 'host-item error';
     errorEl.textContent = '无效的主机规则';
     return errorEl;
+  }
+
+  // 验证主机规则的完整性
+  if (!isValidIp(host.ip) || !isValidDomain(host.domain)) {
+    console.warn('主机规则验证失败:', host);
+    const warningEl = document.createElement('div');
+    warningEl.className = 'host-item warning';
+    warningEl.textContent = `无效规则: ${host.ip} ${host.domain}`;
+    warningEl.style.backgroundColor = 'var(--warning-light)';
+    warningEl.style.color = 'var(--warning-dark)';
+    return warningEl;
   }
 
   // 生成唯一ID
@@ -59,6 +70,13 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
     } else {
       ipSpan.textContent = host.ip;
     }
+
+    // IP地址验证
+    if (host.ip && !isValidIp(host.ip)) {
+      ipSpan.style.color = 'var(--error-color)';
+      ipSpan.title = 'IP地址格式无效';
+    }
+
     hostItem.appendChild(ipSpan);
 
     // 域名显示
@@ -71,6 +89,13 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
     } else {
       domainSpan.textContent = host.domain;
     }
+
+    // 域名验证
+    if (host.domain && !isValidDomain(host.domain)) {
+      domainSpan.style.color = 'var(--error-color)';
+      domainSpan.title = '域名格式无效';
+    }
+
     hostItem.appendChild(domainSpan);
 
     // 操作按钮容器
@@ -125,17 +150,24 @@ function createEnabledCheckbox (groupId, host, uniqueId, onUpdate) {
   enabledCheckbox.type = 'checkbox';
   enabledCheckbox.id = checkboxId;
   enabledCheckbox.className = 'host-enabled';
-  enabledCheckbox.checked = !!host.enabled; // 确保布尔值
+  enabledCheckbox.checked = !!host.enabled;
 
-  // 使用防抖函数包装切换事件
+  // 使用防抖函数包装切换事件，增加延迟时间
   const handleToggle = debounce(async () => {
     try {
+      // 显示处理中状态
+      enabledCheckbox.disabled = true;
+      const hostItem = checkboxContainer.closest('.host-item');
+      if (hostItem) {
+        hostItem.style.opacity = '0.6';
+      }
+
       await StateService.toggleHost(groupId, host.id, enabledCheckbox.checked);
 
       // 同步更新DOM
-      const hostItem = checkboxContainer.closest('.host-item');
       if (hostItem) {
         hostItem.dataset.enabled = String(enabledCheckbox.checked);
+        hostItem.style.opacity = '1';
       }
 
       // 触发自定义事件通知状态变化
@@ -150,6 +182,15 @@ function createEnabledCheckbox (groupId, host, uniqueId, onUpdate) {
       // 恢复原始状态
       enabledCheckbox.checked = !enabledCheckbox.checked;
       Message.error('切换状态失败，请重试');
+
+      // 恢复UI状态
+      const hostItem = checkboxContainer.closest('.host-item');
+      if (hostItem) {
+        hostItem.style.opacity = '1';
+      }
+    } finally {
+      // 恢复复选框
+      enabledCheckbox.disabled = false;
     }
   }, THROTTLE_DELAY);
 
@@ -194,12 +235,17 @@ async function handleDeleteHost (groupId, hostId, hostItem, onUpdate) {
   try {
     const confirmed = await Modal.confirm(
       '删除规则',
-      '确定要删除此规则吗？此操作无法撤销。'
+      '确定要删除此规则吗？此操作无法撤销，将立即更新网络请求规则。'
     );
 
     if (confirmed) {
       // 添加删除中状态
       hostItem.classList.add('deleting');
+      hostItem.style.opacity = '0.5';
+
+      // 禁用所有按钮
+      const buttons = hostItem.querySelectorAll('button');
+      buttons.forEach(btn => btn.disabled = true);
 
       // 执行删除操作
       const success = await StateService.deleteHost(groupId, hostId);
@@ -222,7 +268,7 @@ async function handleDeleteHost (groupId, hostId, hostItem, onUpdate) {
         hostItem.style.margin = '0';
         hostItem.style.overflow = 'hidden';
 
-        // 动画完成后移除元素
+        // 动画完成后移除元素，300ms 与 CSS 动画时长匹配
         setTimeout(() => {
           if (hostItem.parentNode) {
             hostItem.parentNode.removeChild(hostItem);
@@ -232,15 +278,24 @@ async function handleDeleteHost (groupId, hostId, hostItem, onUpdate) {
           if (onUpdate) {
             onUpdate('deleted');
           }
-        }, 300); // 300ms 与 CSS 动画时长匹配
+        }, 300);
       } else {
+        // 恢复状态
         hostItem.classList.remove('deleting');
+        hostItem.style.opacity = '1';
+        buttons.forEach(btn => btn.disabled = false);
         Message.error('删除规则失败，请重试');
       }
     }
   } catch (error) {
     console.error('删除主机失败:', error);
     hostItem.classList.remove('deleting');
+    hostItem.style.opacity = '1';
+
+    // 恢复按钮状态
+    const buttons = hostItem.querySelectorAll('button');
+    buttons.forEach(btn => btn.disabled = false);
+
     Message.error('删除规则失败：' + error.message);
   }
 }
@@ -270,6 +325,18 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   ipInput.style.flex = '0 0 140px';
   ipInput.setAttribute('aria-label', 'IP 地址');
 
+  // 添加实时验证
+  ipInput.addEventListener('input', () => {
+    const value = ipInput.value.trim();
+    if (value && !isValidIp(value)) {
+      ipInput.style.borderColor = 'var(--error-color)';
+      ipInput.title = 'IP地址格式无效';
+    } else {
+      ipInput.style.borderColor = '';
+      ipInput.title = '';
+    }
+  });
+
   // 域名输入框
   const domainInput = document.createElement('input');
   domainInput.type = 'text';
@@ -277,6 +344,18 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   domainInput.placeholder = '域名';
   domainInput.style.flex = '1';
   domainInput.setAttribute('aria-label', '域名');
+
+  // 添加实时验证
+  domainInput.addEventListener('input', () => {
+    const value = domainInput.value.trim();
+    if (value && !isValidDomain(value)) {
+      domainInput.style.borderColor = 'var(--error-color)';
+      domainInput.title = '域名格式无效';
+    } else {
+      domainInput.style.borderColor = '';
+      domainInput.title = '';
+    }
+  });
 
   // IP输入容器
   const ipContainer = document.createElement('div');
@@ -314,6 +393,10 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
     }
 
     try {
+      // 禁用保存按钮，显示处理中状态
+      saveButton.disabled = true;
+      saveButton.textContent = '保存中...';
+
       // 规范化主机规则
       const normalized = normalizeHostRule(newIp, newDomain);
       if (!normalized) {
@@ -336,7 +419,8 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
           groupId,
           updatedHost,
           onUpdate,
-          isSearchResult ? editForm.dataset.searchKeyword : '' // 保留搜索关键字高亮
+          // 保留搜索关键字高亮
+          isSearchResult ? editForm.dataset.searchKeyword : ''
         );
 
         // 替换编辑表单
@@ -354,12 +438,18 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
         if (onUpdate) {
           onUpdate('updated');
         }
+
+        Message.success('规则更新成功，网络请求规则已更新');
       } else {
         Message.error('IP和域名组合已存在，无法更新');
       }
     } catch (error) {
       console.error('更新主机失败:', error);
       Message.error('更新规则失败：' + error.message);
+    } finally {
+      // 恢复按钮状态
+      saveButton.disabled = false;
+      saveButton.textContent = '保存';
     }
   });
 
@@ -403,7 +493,7 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
           groupId,
           { id: hostId, ip: currentIp, domain: currentDomain, enabled: true },
           onUpdate,
-          isSearchResult ? editForm.dataset.searchKeyword : '' // 保留搜索关键字高亮
+          isSearchResult ? editForm.dataset.searchKeyword : ''
         );
 
         if (editForm.parentNode) {
@@ -481,9 +571,28 @@ export function createAddHostForm (groupId, container, onAdd) {
   ruleInput.className = 'rule-input';
   ruleInput.placeholder = '例如: 192.168.1.1 example.com';
   ruleInput.setAttribute('aria-label', '完整规则');
+
+  // 添加实时验证
+  ruleInput.addEventListener('input', () => {
+    const value = ruleInput.value.trim();
+    if (value) {
+      const parsed = parseHostRule(value);
+      if (!parsed || !isValidIp(parsed.ip) || !isValidDomain(parsed.domain)) {
+        ruleInput.style.borderColor = 'var(--error-color)';
+        ruleInput.title = '规则格式无效，请使用格式：IP地址 域名';
+      } else {
+        ruleInput.style.borderColor = 'var(--success-color)';
+        ruleInput.title = '规则格式正确';
+      }
+    } else {
+      ruleInput.style.borderColor = '';
+      ruleInput.title = '';
+    }
+  });
+
   inputBox.appendChild(ruleInput);
 
-  // 使用防抖函数处理添加规则
+  // 使用防抖函数处理添加规则，增加延迟时间
   const handleAddRule = debounce(async () => {
     const ruleText = ruleInput.value.trim();
     if (!ruleText) {
@@ -496,6 +605,8 @@ export function createAddHostForm (groupId, container, onAdd) {
       if (result.success) {
         // 清空输入框
         ruleInput.value = '';
+        ruleInput.style.borderColor = '';
+        ruleInput.title = '';
 
         // 触发自定义事件通知添加状态变化
         dispatchHostModifiedEvent(result.host.id, groupId, 'added');
@@ -504,6 +615,8 @@ export function createAddHostForm (groupId, container, onAdd) {
         if (onAdd) {
           onAdd(result.host);
         }
+
+        Message.success('规则添加成功，网络请求规则已更新');
       } else {
         Message.error(result.message);
       }
@@ -543,10 +656,40 @@ export function createAddHostForm (groupId, container, onAdd) {
   ipInput.placeholder = 'IP 地址';
   ipInput.setAttribute('aria-label', 'IP 地址');
 
+  // 添加实时验证
+  ipInput.addEventListener('input', () => {
+    const value = ipInput.value.trim();
+    if (value && !isValidIp(value)) {
+      ipInput.style.borderColor = 'var(--error-color)';
+      ipInput.title = 'IP地址格式无效';
+    } else if (value) {
+      ipInput.style.borderColor = 'var(--success-color)';
+      ipInput.title = 'IP地址格式正确';
+    } else {
+      ipInput.style.borderColor = '';
+      ipInput.title = '';
+    }
+  });
+
   const domainInput = document.createElement('input');
   domainInput.type = 'text';
   domainInput.placeholder = '域名';
   domainInput.setAttribute('aria-label', '域名');
+
+  // 添加实时验证
+  domainInput.addEventListener('input', () => {
+    const value = domainInput.value.trim();
+    if (value && !isValidDomain(value)) {
+      domainInput.style.borderColor = 'var(--error-color)';
+      domainInput.title = '域名格式无效';
+    } else if (value) {
+      domainInput.style.borderColor = 'var(--success-color)';
+      domainInput.title = '域名格式正确';
+    } else {
+      domainInput.style.borderColor = '';
+      domainInput.title = '';
+    }
+  });
 
   // IP输入容器
   const ipContainer = document.createElement('div');
@@ -562,7 +705,7 @@ export function createAddHostForm (groupId, container, onAdd) {
   domainContainer.style.flex = '1';
   domainContainer.appendChild(domainInput);
 
-  // 使用防抖函数处理添加按钮点击
+  // 使用防抖函数处理添加按钮点击，增加延迟时间
   const handleAddSeparate = debounce(async () => {
     const ip = ipInput.value.trim();
     const domain = domainInput.value.trim();
@@ -609,10 +752,16 @@ export function createAddHostForm (groupId, container, onAdd) {
         // 清空输入框
         ipInput.value = '';
         domainInput.value = '';
+        ipInput.style.borderColor = '';
+        domainInput.style.borderColor = '';
+        ipInput.title = '';
+        domainInput.title = '';
 
         if (onAdd) {
           onAdd(newHost);
         }
+
+        Message.success('规则添加成功，网络请求规则已更新');
       } else {
         Message.error('规则已存在或格式无效');
       }
@@ -661,16 +810,16 @@ export function createAddHostForm (groupId, container, onAdd) {
  */
 async function addRule (groupId, ruleText) {
   // 解析规则
-  const parts = ruleText.split(/\s+/);
-  if (parts.length < 2) {
+  const parsedRule = parseHostRule(ruleText);
+
+  if (!parsedRule) {
     return {
       success: false,
       message: '请输入有效的规则格式: [IP地址] [域名]'
     };
   }
 
-  const ip = parts[0];
-  const domain = parts[1];
+  const { ip, domain } = parsedRule;
 
   // 验证IP和域名
   if (!isValidIp(ip)) {

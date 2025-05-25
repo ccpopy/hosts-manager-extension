@@ -11,6 +11,9 @@ import { Message } from '../utils/MessageUtils.js';
 // 分组项计数器 - 用于生成唯一ID
 let groupItemCounter = 0;
 
+// 节流延迟时间
+const THROTTLE_DELAY = 600;
+
 /**
  * 创建分组元素
  * @param {Object} group - 分组对象
@@ -164,10 +167,12 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
 
     // 主机数量标签
     const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
+    const enabledCount = Array.isArray(group.hosts) ? group.hosts.filter(h => h.enabled).length : 0;
     const hostsCountTag = document.createElement('span');
     hostsCountTag.className = 'status-tag status-tag-default';
     hostsCountTag.style.marginLeft = '8px';
-    hostsCountTag.textContent = `${hostsCount} 条规则`;
+    hostsCountTag.textContent = `${enabledCount}/${hostsCount} 条规则`;
+    hostsCountTag.title = `${enabledCount} 条启用规则，共 ${hostsCount} 条规则`;
 
     groupNameContainer.appendChild(groupName);
     groupNameContainer.appendChild(statusTag);
@@ -192,27 +197,43 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
         e.stopPropagation();
 
         // 显示状态切换中的反馈
-        statusTag.textContent = checkbox.checked ? '切换中...' : '切换中...';
+        checkbox.disabled = true;
+        statusTag.textContent = '更新中...';
+        statusTag.className = 'status-tag status-tag-default';
 
         // 使用 StateService 切换分组状态
-        await StateService.toggleGroup(group.id, checkbox.checked);
+        const success = await StateService.toggleGroup(group.id, checkbox.checked);
 
-        // 立即更新 UI 状态
-        statusTag.className = checkbox.checked ? 'status-tag status-tag-success' : 'status-tag status-tag-default';
-        statusTag.textContent = checkbox.checked ? '已启用' : '已禁用';
+        if (success) {
+          // 立即更新 UI 状态
+          statusTag.className = checkbox.checked ? 'status-tag status-tag-success' : 'status-tag status-tag-default';
+          statusTag.textContent = checkbox.checked ? '已启用' : '已禁用';
 
-        // 更新分组元素的激活状态
-        const groupItem = groupHeader.closest('.group-item');
-        if (groupItem) {
-          groupItem.dataset.active = String(checkbox.checked);
-        }
+          // 更新分组元素的激活状态
+          const groupItem = groupHeader.closest('.group-item');
+          if (groupItem) {
+            groupItem.dataset.active = String(checkbox.checked);
+          }
 
-        // 如果提供了更新回调，则调用
-        if (onUpdate) {
-          onUpdate(group.id, 'toggled');
+          // 如果提供了更新回调，则调用
+          if (onUpdate) {
+            onUpdate(group.id, 'toggled');
+          }
+
+          // 显示成功消息
+          const actionText = checkbox.checked ? '启用' : '禁用';
+          Message.success(`分组 "${group.name}" 已${actionText}，网络请求规则已更新`);
+        } else {
+          // 操作失败，恢复状态
+          checkbox.checked = !checkbox.checked;
+          statusTag.className = checkbox.checked ? 'status-tag status-tag-success' : 'status-tag status-tag-default';
+          statusTag.textContent = checkbox.checked ? '已启用' : '已禁用';
+
+          Message.error('切换分组状态失败，请重试');
         }
       } catch (error) {
         console.error('切换分组状态失败:', error);
+
         // 恢复复选框状态
         checkbox.checked = !checkbox.checked;
 
@@ -220,9 +241,12 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
         statusTag.className = checkbox.checked ? 'status-tag status-tag-success' : 'status-tag status-tag-default';
         statusTag.textContent = checkbox.checked ? '已启用' : '已禁用';
 
-        Message.error('切换分组状态失败，请重试');
+        Message.error('切换分组状态失败：' + error.message);
+      } finally {
+        // 恢复复选框可用状态
+        checkbox.disabled = false;
       }
-    }, 300);
+    }, THROTTLE_DELAY);
 
     checkbox.addEventListener('change', handleToggle);
 
@@ -279,8 +303,11 @@ function renderHosts (group, container, onUpdate) {
               // 对象类型的主机更新，可能需要特殊处理
               // 例如：编辑操作返回的修改后主机对象
             } else if (actionOrUpdatedHost === 'toggled') {
-              // 主机启用/禁用状态切换
-              // 这里无需特殊处理，因为切换操作已经直接更新了DOM
+              // 主机启用/禁用状态切换，更新分组头部的统计信息
+              updateGroupStats(group.id, container);
+            } else if (actionOrUpdatedHost === 'updated') {
+              // 主机更新，需要刷新列表以反映验证结果
+              await updateHostsList(group.id, container, onUpdate);
             }
 
             // 通知上层组件
@@ -302,6 +329,9 @@ function renderHosts (group, container, onUpdate) {
           const errorItem = document.createElement('div');
           errorItem.className = 'host-item error';
           errorItem.textContent = `加载规则失败: ${host.ip || ''} ${host.domain || ''}`;
+          errorItem.style.backgroundColor = 'var(--error-light)';
+          errorItem.style.color = 'var(--error-dark)';
+          errorItem.style.border = '1px solid var(--error-color)';
           hostsContainer.appendChild(errorItem);
         }
       });
@@ -324,8 +354,38 @@ function renderHosts (group, container, onUpdate) {
     errorMessage.className = 'error-message';
     errorMessage.style.color = 'var(--error-dark)';
     errorMessage.style.padding = '16px 0';
+    errorMessage.style.backgroundColor = 'var(--error-light)';
+    errorMessage.style.borderRadius = 'var(--rounded)';
+    errorMessage.style.textAlign = 'center';
     errorMessage.textContent = '加载规则列表失败';
     container.appendChild(errorMessage);
+  }
+}
+
+/**
+ * 更新分组统计信息
+ * @param {string} groupId - 分组ID
+ * @param {HTMLElement} container - 容器元素
+ */
+async function updateGroupStats (groupId, container) {
+  try {
+    const state = StateService.getState();
+    const group = state.hostsGroups.find(g => g.id === groupId);
+
+    if (!group) return;
+
+    const groupItem = container.closest('.group-item');
+    if (!groupItem) return;
+
+    const hostsCountTag = groupItem.querySelector('.group-header .status-tag:nth-child(3)');
+    if (hostsCountTag) {
+      const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
+      const enabledCount = Array.isArray(group.hosts) ? group.hosts.filter(h => h.enabled).length : 0;
+      hostsCountTag.textContent = `${enabledCount}/${hostsCount} 条规则`;
+      hostsCountTag.title = `${enabledCount} 条启用规则，共 ${hostsCount} 条规则`;
+    }
+  } catch (error) {
+    console.error('更新分组统计信息失败:', error);
   }
 }
 
@@ -380,6 +440,8 @@ async function updateHostsList (groupId, container, onUpdate) {
           try {
             if (actionOrUpdatedHost === 'deleted') {
               await updateHostsList(groupId, container, onUpdate);
+            } else if (actionOrUpdatedHost === 'toggled') {
+              updateGroupStats(groupId, container);
             }
 
             if (onUpdate) {
@@ -399,6 +461,8 @@ async function updateHostsList (groupId, container, onUpdate) {
           const errorItem = document.createElement('div');
           errorItem.className = 'host-item error';
           errorItem.textContent = `加载规则失败: ${host.ip || ''} ${host.domain || ''}`;
+          errorItem.style.backgroundColor = 'var(--error-light)';
+          errorItem.style.color = 'var(--error-dark)';
           hostsContainer.appendChild(errorItem);
         }
       });
@@ -413,14 +477,7 @@ async function updateHostsList (groupId, container, onUpdate) {
     }
 
     // 更新主机数量标签
-    const groupItem = container.closest('.group-item');
-    if (groupItem) {
-      const hostsCountTag = groupItem.querySelector('.group-header .status-tag:nth-child(3)');
-      if (hostsCountTag) {
-        const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
-        hostsCountTag.textContent = `${hostsCount} 条规则`;
-      }
-    }
+    updateGroupStats(groupId, container);
 
     // 恢复滚动位置
     setTimeout(() => {
@@ -509,10 +566,12 @@ function createGroupActions (group, groupItem, onUpdate) {
         // 禁用按钮，防止重复点击
         deleteButton.disabled = true;
 
-        const confirmed = await Modal.confirm(
-          '删除分组',
-          `确定要删除分组 "${group.name}" 吗? 分组中的所有规则都将被删除。`
-        );
+        const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
+        const confirmMessage = hostsCount > 0
+          ? `确定要删除分组 "${group.name}" 吗？分组中的 ${hostsCount} 条规则都将被删除，网络请求规则也会立即更新。`
+          : `确定要删除分组 "${group.name}" 吗？`;
+
+        const confirmed = await Modal.confirm('删除分组', confirmMessage);
 
         if (confirmed) {
           // 显示处理中状态
@@ -559,7 +618,10 @@ function createGroupActions (group, groupItem, onUpdate) {
             }
 
             // 显示成功消息
-            Message.success('分组已删除');
+            const successMessage = hostsCount > 0
+              ? `分组 "${group.name}" 及其 ${hostsCount} 条规则已删除，网络请求规则已更新`
+              : `分组 "${group.name}" 已删除`;
+            Message.success(successMessage);
           }, 300);
         } else {
           // 用户取消，恢复按钮状态
@@ -570,7 +632,7 @@ function createGroupActions (group, groupItem, onUpdate) {
         groupItem.classList.remove('deleting');
         deleteButton.textContent = '删除分组';
         deleteButton.disabled = false;
-        Message.error('删除分组失败，请重试');
+        Message.error('删除分组失败：' + error.message);
       }
     });
 

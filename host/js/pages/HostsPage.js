@@ -14,6 +14,14 @@ const VIRTUALIZATION = {
   renderThreshold: 100    // 启用虚拟化的最小项数
 };
 
+// 适配declarativeNetRequest的延迟配置
+const DECLARATIVE_NET_REQUEST_CONFIG = {
+  searchDebounceDelay: 500,    // 搜索防抖延迟，增加以适应更新时间
+  updateDebounceDelay: 800,    // 状态更新防抖延迟
+  maxRetries: 3,               // 最大重试次数
+  retryDelay: 1000            // 重试延迟
+};
+
 export default class HostsPage {
   /**
    * 构造函数
@@ -43,16 +51,26 @@ export default class HostsPage {
       viewportHeight: 0     // 视口高度
     };
 
-    // 性能优化: 防抖搜索
-    this.performSearch = debounce(this._performSearch.bind(this), 300);
+    // 性能优化: 防抖搜索，增加延迟时间
+    this.performSearch = debounce(this._performSearch.bind(this), DECLARATIVE_NET_REQUEST_CONFIG.searchDebounceDelay);
+
+    // 状态更新防抖
+    this.handleStateChangeDebounced = debounce(this.handleStateChange.bind(this), DECLARATIVE_NET_REQUEST_CONFIG.updateDebounceDelay);
 
     // 订阅状态变化
-    this.unsubscribe = StateService.subscribe(this.handleStateChange.bind(this));
+    this.unsubscribe = StateService.subscribe(this.handleStateChangeDebounced);
 
     // 跟踪修改的主机和分组，用于同步视图
     this.modifiedEntities = {
       hosts: new Set(),
       groups: new Set()
+    };
+
+    // declarativeNetRequest状态监控
+    this.networkRequestState = {
+      updating: false,
+      lastUpdateTime: 0,
+      failureCount: 0
     };
 
     // 添加页面级事件监听器
@@ -70,6 +88,71 @@ export default class HostsPage {
     // 监听主机操作事件
     this._hostModifiedHandler = this.handleHostModified.bind(this);
     document.addEventListener('hostModified', this._hostModifiedHandler);
+
+    // 监听网络请求更新状态
+    this._networkRequestUpdateHandler = this.handleNetworkRequestUpdate.bind(this);
+    document.addEventListener('networkRequestUpdate', this._networkRequestUpdateHandler);
+  }
+
+  /**
+   * 处理网络请求更新事件
+   * @param {CustomEvent} event - 网络请求更新事件
+   */
+  handleNetworkRequestUpdate (event) {
+    if (event && event.detail) {
+      const { status, error } = event.detail;
+
+      this.networkRequestState.updating = status === 'updating';
+      this.networkRequestState.lastUpdateTime = Date.now();
+
+      if (error) {
+        this.networkRequestState.failureCount++;
+        console.warn('Network request update failed:', error);
+
+        // 如果失败次数过多，显示警告
+        if (this.networkRequestState.failureCount >= DECLARATIVE_NET_REQUEST_CONFIG.maxRetries) {
+          this.showNetworkRequestWarning();
+        }
+      } else if (status === 'completed') {
+        this.networkRequestState.failureCount = 0; // 成功后重置失败计数
+      }
+    }
+  }
+
+  /**
+   * 显示网络请求警告
+   */
+  showNetworkRequestWarning () {
+    const existingWarning = document.querySelector('.network-request-warning');
+    if (existingWarning) return; // 避免重复显示
+
+    const warningElement = document.createElement('div');
+    warningElement.className = 'network-request-warning notice-box warning';
+    warningElement.style.position = 'fixed';
+    warningElement.style.top = '20px';
+    warningElement.style.left = '50%';
+    warningElement.style.transform = 'translateX(-50%)';
+    warningElement.style.zIndex = '1000';
+    warningElement.style.maxWidth = '400px';
+    warningElement.innerHTML = `
+      <svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+      </svg>
+      <div>
+        <strong>网络请求更新异常</strong><br>
+        部分hosts规则可能未生效，请刷新页面重试
+      </div>
+      <button onclick="this.parentNode.remove()" style="margin-left: auto; background: none; border: none; font-size: 18px; cursor: pointer;">×</button>
+    `;
+
+    document.body.appendChild(warningElement);
+
+    // 5秒后自动移除
+    setTimeout(() => {
+      if (warningElement.parentNode) {
+        warningElement.parentNode.removeChild(warningElement);
+      }
+    }, 5000);
   }
 
   /**
@@ -180,32 +263,73 @@ export default class HostsPage {
    * @param {object} state - 应用状态
    */
   handleStateChange (state) {
-    // 如果有活跃搜索，更新搜索结果
-    if (this.searchKeyword) {
-      // 使用防抖函数延迟执行搜索
-      this.performSearch();
-    } else {
-      // 如果没有搜索关键字，更新主视图
-      this.updateMainView(state);
-    }
+    try {
+      // 如果有活跃搜索，更新搜索结果
+      if (this.searchKeyword) {
+        // 使用防抖函数延迟执行搜索
+        this.performSearch();
+      } else {
+        // 如果没有搜索关键字，更新主视图
+        this.updateMainView(state);
+      }
 
-    // 更新添加分组表单区域
-    this.updateAddGroupFormSection(state.showAddGroupForm);
+      // 更新添加分组表单区域
+      this.updateAddGroupFormSection(state.showAddGroupForm);
+    } catch (error) {
+      console.error('处理状态变化失败:', error);
+      // 显示错误提示，但不中断程序执行
+      this.showErrorNotification('状态更新失败，部分内容可能不是最新的');
+    }
+  }
+
+  /**
+   * 显示错误通知
+   * @param {string} message - 错误消息
+   */
+  showErrorNotification (message) {
+    // 创建临时错误提示
+    const errorNotification = document.createElement('div');
+    errorNotification.className = 'error-notification notice-box error';
+    errorNotification.style.position = 'fixed';
+    errorNotification.style.top = '70px';
+    errorNotification.style.right = '20px';
+    errorNotification.style.zIndex = '1001';
+    errorNotification.style.maxWidth = '300px';
+    errorNotification.innerHTML = `
+      <svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+      </svg>
+      <span>${message}</span>
+    `;
+
+    document.body.appendChild(errorNotification);
+
+    // 3秒后自动移除
+    setTimeout(() => {
+      if (errorNotification.parentNode) {
+        errorNotification.parentNode.removeChild(errorNotification);
+      }
+    }, 3000);
   }
 
   /**
    * 初始化页面
    */
   async init () {
-    await StateService.initialize();
-    const state = StateService.getState();
-    this.showAddGroupForm = state.showAddGroupForm;
+    try {
+      await StateService.initialize();
+      const state = StateService.getState();
+      this.showAddGroupForm = state.showAddGroupForm;
 
-    // 渲染页面
-    await this.render();
+      // 渲染页面
+      await this.render();
 
-    // 初始化虚拟滚动
-    this.initVirtualScroll();
+      // 初始化虚拟滚动
+      this.initVirtualScroll();
+    } catch (error) {
+      console.error('初始化Hosts页面失败:', error);
+      this.renderError('初始化页面失败，请刷新重试');
+    }
   }
 
   /**
@@ -223,7 +347,7 @@ export default class HostsPage {
 
     // 提示信息
     const notice = createNotice(
-      '可以创建多个分组，每个分组可以独立启用或禁用，方便管理不同场景的hosts配置。',
+      '可以创建多个分组，每个分组可以独立启用或禁用。现在使用declarativeNetRequest API进行域名映射，提供更好的性能和可靠性。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -265,6 +389,48 @@ export default class HostsPage {
   }
 
   /**
+   * 渲染错误状态
+   * @param {string} message - 错误消息
+   */
+  renderError (message) {
+    this.container.innerHTML = '';
+
+    const errorContainer = document.createElement('div');
+    errorContainer.className = 'page-error-container';
+    errorContainer.style.textAlign = 'center';
+    errorContainer.style.padding = '64px 20px';
+    errorContainer.style.color = 'var(--error-dark)';
+    errorContainer.style.backgroundColor = 'var(--error-light)';
+    errorContainer.style.borderRadius = 'var(--rounded-xl)';
+
+    const errorIcon = document.createElement('div');
+    errorIcon.style.fontSize = '48px';
+    errorIcon.style.marginBottom = '16px';
+    errorIcon.innerHTML = '⚠️';
+    errorContainer.appendChild(errorIcon);
+
+    const errorTitle = document.createElement('h3');
+    errorTitle.textContent = '页面加载失败';
+    errorTitle.style.marginBottom = '8px';
+    errorContainer.appendChild(errorTitle);
+
+    const errorMessage = document.createElement('p');
+    errorMessage.textContent = message;
+    errorMessage.style.marginBottom = '24px';
+    errorContainer.appendChild(errorMessage);
+
+    const retryButton = document.createElement('button');
+    retryButton.className = 'button button-primary';
+    retryButton.textContent = '重新加载';
+    retryButton.addEventListener('click', () => {
+      this.init();
+    });
+    errorContainer.appendChild(retryButton);
+
+    this.container.appendChild(errorContainer);
+  }
+
+  /**
    * 创建操作栏
    * @returns {HTMLElement} 操作栏元素
    */
@@ -276,10 +442,13 @@ export default class HostsPage {
     const addGroupButton = document.createElement('div');
     addGroupButton.className = 'add-group-button';
     addGroupButton.innerHTML = '<span class="add-group-button-icon">+</span> 添加分组';
-    addGroupButton.addEventListener('click', () => {
-      StateService.setShowAddGroupForm(true).catch(error => {
+    addGroupButton.addEventListener('click', async () => {
+      try {
+        await StateService.setShowAddGroupForm(true);
+      } catch (error) {
         console.error('Failed to set showAddGroupForm:', error);
-      });
+        this.showErrorNotification('显示添加分组表单失败');
+      }
     });
 
     actionBar.appendChild(addGroupButton);
@@ -438,10 +607,17 @@ export default class HostsPage {
     emptyIcon.innerHTML = '📝';
 
     const emptyText = document.createElement('p');
-    emptyText.textContent = '还没有任何分组，点击"添加分组"创建一个新分组。';
+    emptyText.textContent = '还没有任何分组，点击"添加分组"创建一个新分组开始管理hosts规则。';
+
+    const emptyHint = document.createElement('p');
+    emptyHint.style.fontSize = '14px';
+    emptyHint.style.color = 'var(--gray-500)';
+    emptyHint.style.marginTop = '8px';
+    emptyHint.textContent = '新版本使用declarativeNetRequest API，提供更好的性能';
 
     emptyState.appendChild(emptyIcon);
     emptyState.appendChild(emptyText);
+    emptyState.appendChild(emptyHint);
     this.groupList.appendChild(emptyState);
   }
 
@@ -545,6 +721,8 @@ export default class HostsPage {
             const errorItem = document.createElement('div');
             errorItem.className = 'host-item error';
             errorItem.textContent = `加载规则失败: ${host.ip || ''} ${host.domain || ''}`;
+            errorItem.style.backgroundColor = 'var(--error-light)';
+            errorItem.style.color = 'var(--error-dark)';
             container.appendChild(errorItem);
           }
         });
@@ -564,7 +742,9 @@ export default class HostsPage {
         const hostsCountTag = groupElement.querySelector('.group-header .status-tag:nth-child(3)');
         if (hostsCountTag) {
           const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
-          hostsCountTag.textContent = `${hostsCount} 条规则`;
+          const enabledCount = Array.isArray(group.hosts) ? group.hosts.filter(h => h.enabled).length : 0;
+          hostsCountTag.textContent = `${enabledCount}/${hostsCount} 条规则`;
+          hostsCountTag.title = `${enabledCount} 条启用规则，共 ${hostsCount} 条规则`;
         }
       }
     } catch (error) {
@@ -665,14 +845,23 @@ export default class HostsPage {
       const addGroupForm = createAddGroupForm(
         async (newGroup) => {
           // 添加分组成功后的回调
-          const success = await StateService.addGroup(newGroup, true);
-          if (success) {
-            await StateService.setShowAddGroupForm(false);
+          try {
+            const success = await StateService.addGroup(newGroup, true);
+            if (success) {
+              await StateService.setShowAddGroupForm(false);
+            }
+          } catch (error) {
+            console.error('添加分组失败:', error);
+            this.showErrorNotification('添加分组失败，请重试');
           }
         },
-        () => {
+        async () => {
           // 取消添加分组的回调
-          StateService.setShowAddGroupForm(false);
+          try {
+            await StateService.setShowAddGroupForm(false);
+          } catch (error) {
+            console.error('取消添加分组失败:', error);
+          }
         }
       );
       container.appendChild(addGroupForm);
@@ -684,34 +873,39 @@ export default class HostsPage {
    * 使用防抖函数包装
    */
   _performSearch () {
-    // 使用 StateService 执行搜索
-    const searchResult = StateService.search(this.searchKeyword);
+    try {
+      // 使用 StateService 执行搜索
+      const searchResult = StateService.search(this.searchKeyword);
 
-    // 清空搜索结果容器
-    this.searchResultsContainer.innerHTML = '';
+      // 清空搜索结果容器
+      this.searchResultsContainer.innerHTML = '';
 
-    // 如果没有搜索关键字，隐藏搜索结果并显示分组列表
-    if (!this.searchKeyword) {
-      this.searchResultsContainer.style.display = 'none';
-      this.groupListContainer.style.display = 'block';
+      // 如果没有搜索关键字，隐藏搜索结果并显示分组列表
+      if (!this.searchKeyword) {
+        this.searchResultsContainer.style.display = 'none';
+        this.groupListContainer.style.display = 'block';
 
-      // 清除搜索时，确保刷新主视图以反映任何变化
-      this.refreshMainView();
-      return;
-    }
+        // 清除搜索时，确保刷新主视图以反映任何变化
+        this.refreshMainView();
+        return;
+      }
 
-    // 显示搜索结果并隐藏分组列表
-    this.searchResultsContainer.style.display = 'block';
-    this.groupListContainer.style.display = 'none';
+      // 显示搜索结果并隐藏分组列表
+      this.searchResultsContainer.style.display = 'block';
+      this.groupListContainer.style.display = 'none';
 
-    // 渲染搜索头部和结果
-    this.renderSearchHeader(searchResult);
+      // 渲染搜索头部和结果
+      this.renderSearchHeader(searchResult);
 
-    // 显示搜索结果
-    if (searchResult.totalMatches === 0) {
-      this.renderEmptySearchResult();
-    } else {
-      this.renderSearchResults(searchResult);
+      // 显示搜索结果
+      if (searchResult.totalMatches === 0) {
+        this.renderEmptySearchResult();
+      } else {
+        this.renderSearchResults(searchResult);
+      }
+    } catch (error) {
+      console.error('执行搜索失败:', error);
+      this.showErrorNotification('搜索失败，请重试');
     }
   }
 
@@ -766,8 +960,15 @@ export default class HostsPage {
     const emptyText = document.createElement('p');
     emptyText.textContent = `没有找到与 "${this.searchKeyword}" 匹配的规则`;
 
+    const emptyHint = document.createElement('p');
+    emptyHint.style.fontSize = '14px';
+    emptyHint.style.color = 'var(--gray-500)';
+    emptyHint.style.marginTop = '8px';
+    emptyHint.textContent = '尝试使用不同的关键字或检查拼写';
+
     emptyState.appendChild(emptyIcon);
     emptyState.appendChild(emptyText);
+    emptyState.appendChild(emptyHint);
     this.searchResultsContainer.appendChild(emptyState);
   }
 
@@ -776,76 +977,91 @@ export default class HostsPage {
    * @param {Object} searchResult - 搜索结果对象
    */
   renderSearchResults (searchResult) {
-    // 使用文档片段减少DOM重绘
-    const fragment = document.createDocumentFragment();
+    try {
+      // 使用文档片段减少DOM重绘
+      const fragment = document.createDocumentFragment();
 
-    searchResult.matchedGroups.forEach(group => {
-      // 创建分组标题
-      const groupHeader = document.createElement('div');
-      groupHeader.className = 'search-result-group-header';
-      groupHeader.dataset.groupId = group.id;
+      searchResult.matchedGroups.forEach(group => {
+        // 创建分组标题
+        const groupHeader = document.createElement('div');
+        groupHeader.className = 'search-result-group-header';
+        groupHeader.dataset.groupId = group.id;
 
-      const groupNameContainer = document.createElement('div');
-      groupNameContainer.style.display = 'flex';
-      groupNameContainer.style.alignItems = 'center';
+        const groupNameContainer = document.createElement('div');
+        groupNameContainer.style.display = 'flex';
+        groupNameContainer.style.alignItems = 'center';
 
-      const groupName = document.createElement('div');
-      groupName.className = 'search-result-group-name';
-      groupName.textContent = group.name;
+        const groupName = document.createElement('div');
+        groupName.className = 'search-result-group-name';
+        groupName.textContent = group.name;
 
-      // 添加状态标签
-      const statusTag = document.createElement('span');
-      statusTag.className = 'status-tag status-tag-success';
-      statusTag.textContent = `${group.matchCount} 条匹配`;
+        // 添加状态标签
+        const statusTag = document.createElement('span');
+        statusTag.className = 'status-tag status-tag-success';
+        statusTag.textContent = `${group.matchCount} 条匹配`;
 
-      groupNameContainer.appendChild(groupName);
-      groupNameContainer.appendChild(statusTag);
-      groupHeader.appendChild(groupNameContainer);
+        groupNameContainer.appendChild(groupName);
+        groupNameContainer.appendChild(statusTag);
+        groupHeader.appendChild(groupNameContainer);
 
-      fragment.appendChild(groupHeader);
+        fragment.appendChild(groupHeader);
 
-      // 创建匹配的主机元素容器
-      const hostsList = document.createElement('div');
-      hostsList.className = 'search-result-hosts';
-      hostsList.dataset.groupId = group.id;
+        // 创建匹配的主机元素容器
+        const hostsList = document.createElement('div');
+        hostsList.className = 'search-result-hosts';
+        hostsList.dataset.groupId = group.id;
 
-      // 遍历并显示所有匹配的主机
-      group.hosts.forEach(host => {
-        const cacheKey = `search-${group.id}-${host.id}`;
+        // 遍历并显示所有匹配的主机
+        group.hosts.forEach(host => {
+          const cacheKey = `search-${group.id}-${host.id}`;
 
-        // 检查主机是否已修改
-        const isHostModified = this.modifiedEntities.hosts.has(host.id);
+          // 检查主机是否已修改
+          const isHostModified = this.modifiedEntities.hosts.has(host.id);
 
-        // 使用缓存提高性能，但如果主机已修改则强制重新渲染
-        let hostItem = isHostModified ? null : this.searchResultHosts.get(cacheKey);
+          // 使用缓存提高性能，但如果主机已修改则强制重新渲染
+          let hostItem = isHostModified ? null : this.searchResultHosts.get(cacheKey);
 
-        if (!hostItem) {
-          // 创建更新回调
-          const hostUpdateCallback = (action) => this.handleHostUpdateInSearch(group.id, host.id, action);
+          if (!hostItem) {
+            // 创建更新回调
+            const hostUpdateCallback = (action) => this.handleHostUpdateInSearch(group.id, host.id, action);
 
-          // 创建主机项并设置回调
-          hostItem = createHostElement(
-            group.id,
-            host,
-            hostUpdateCallback,
-            this.searchKeyword
-          );
+            // 创建主机项并设置回调
+            try {
+              hostItem = createHostElement(
+                group.id,
+                host,
+                hostUpdateCallback,
+                this.searchKeyword
+              );
 
-          // 将搜索视图中的元素标记为搜索结果
-          hostItem.dataset.isSearchResult = 'true';
+              // 将搜索视图中的元素标记为搜索结果
+              hostItem.dataset.isSearchResult = 'true';
 
-          // 缓存搜索结果中的主机元素
-          this.searchResultHosts.set(cacheKey, hostItem);
-        }
+              // 缓存搜索结果中的主机元素
+              this.searchResultHosts.set(cacheKey, hostItem);
+            } catch (error) {
+              console.error('创建搜索结果主机元素失败:', error);
+              // 创建错误元素
+              hostItem = document.createElement('div');
+              hostItem.className = 'host-item error';
+              hostItem.textContent = `加载规则失败: ${host.ip || ''} ${host.domain || ''}`;
+              hostItem.style.backgroundColor = 'var(--error-light)';
+              hostItem.style.color = 'var(--error-dark)';
+            }
+          }
 
-        hostsList.appendChild(hostItem);
+          hostsList.appendChild(hostItem);
+        });
+
+        fragment.appendChild(hostsList);
       });
 
-      fragment.appendChild(hostsList);
-    });
-
-    // 一次性添加所有结果
-    this.searchResultsContainer.appendChild(fragment);
+      // 一次性添加所有结果
+      this.searchResultsContainer.appendChild(fragment);
+    } catch (error) {
+      console.error('渲染搜索结果失败:', error);
+      this.showErrorNotification('渲染搜索结果失败');
+    }
   }
 
   /**
@@ -884,15 +1100,20 @@ export default class HostsPage {
     // 如果搜索结果正在显示，不更新主视图
     if (this.searchKeyword) return;
 
-    // 计算是否需要完全重新渲染
-    const needFullRerender = this.needFullRerender(state);
+    try {
+      // 计算是否需要完全重新渲染
+      const needFullRerender = this.needFullRerender(state);
 
-    if (needFullRerender) {
-      // 重新渲染整个分组列表
-      this.refreshMainView();
-    } else {
-      // 仅更新已变更的部分
-      this.updateChangedGroups(state);
+      if (needFullRerender) {
+        // 重新渲染整个分组列表
+        this.refreshMainView();
+      } else {
+        // 仅更新已变更的部分
+        this.updateChangedGroups(state);
+      }
+    } catch (error) {
+      console.error('更新主视图失败:', error);
+      this.showErrorNotification('更新视图失败，请刷新页面');
     }
   }
 
@@ -1047,6 +1268,11 @@ export default class HostsPage {
       if (this._hostModifiedHandler) {
         document.removeEventListener('hostModified', this._hostModifiedHandler);
         this._hostModifiedHandler = null;
+      }
+
+      if (this._networkRequestUpdateHandler) {
+        document.removeEventListener('networkRequestUpdate', this._networkRequestUpdateHandler);
+        this._networkRequestUpdateHandler = null;
       }
 
       // 清空缓存
