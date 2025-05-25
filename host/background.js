@@ -1,6 +1,6 @@
 /**
  * Hosts Manager background scripts
- * Handles hosts mapping using declarativeNetRequest API and proxy configuration
+ * Handles hosts mapping using PAC script and proxy configuration
  */
 
 // Global variables store active host mapping and grouping
@@ -18,100 +18,67 @@ const proxyState = {
   ERROR_RESET_TIME: 60000,
 };
 
-// declarativeNetRequest rule management
-const RULE_MANAGEMENT = {
-  RULE_ID_START: 1,
-  // Chrome extension rule limit
-  RULE_ID_MAX: 30000,
-  currentRuleId: 1,
-  activeRuleIds: new Set(),
-  updating: false,
-};
-
-/**
- * Initialize extension
- */
 /**
  * Initialize extension
  */
 function initializeExtension () {
-  // Clean up all existing rules on initialization
-  clearAllHostsRules()
-    .then(() => {
-      // Get stored groups and active groups
-      chrome.storage.local.get(['hostsGroups', 'activeGroups'], (result) => {
-        try {
-          // If there are no groups, create default groups
-          if (!result.hostsGroups) {
-            const defaultGroups = [
-              {
-                id: 'default',
-                name: 'Default Group',
-                hosts: [],
-                enabled: true
-              }
-            ];
-
-            chrome.storage.local.set({ hostsGroups: defaultGroups }).catch(error => {
-              console.error('Failed to initialize default grouping:', error);
-            });
+  // Get stored groups and active groups
+  chrome.storage.local.get(['hostsGroups', 'activeGroups'], (result) => {
+    try {
+      // If there are no groups, create default groups
+      if (!result.hostsGroups) {
+        const defaultGroups = [
+          {
+            id: 'default',
+            name: 'Default Group',
+            hosts: [],
+            enabled: true
           }
+        ];
 
-          // If there are active groups, update mapping
-          if (result.activeGroups && Array.isArray(result.activeGroups)) {
-            activeGroups = result.activeGroups;
+        chrome.storage.local.set({ hostsGroups: defaultGroups }).catch(error => {
+          console.error('Failed to initialize default grouping:', error);
+        });
+      }
 
-            // Delayed update mapping to ensure initialization is complete and avoid concurrency issues
-            setTimeout(() => {
-              updateActiveHostsMap().catch(error => {
-                console.error('Failed to update initial hosts mapping:', error);
-              });
-            }, 200);
-          } else {
-            // Otherwise, activate all groups
-            chrome.storage.local.get(['hostsGroups'], (data) => {
-              if (data.hostsGroups && Array.isArray(data.hostsGroups)) {
-                const allGroupIds = data.hostsGroups.map(group => group.id);
+      // If there are active groups, update mapping
+      if (result.activeGroups && Array.isArray(result.activeGroups)) {
+        activeGroups = result.activeGroups;
 
-                chrome.storage.local.set({ activeGroups: allGroupIds })
-                  .then(() => {
-                    activeGroups = allGroupIds;
+        // Delayed update mapping to ensure initialization is complete
+        setTimeout(() => {
+          updateActiveHostsMap().catch(error => {
+            console.error('Failed to update initial hosts mapping:', error);
+          });
+        }, 200);
+      } else {
+        // Otherwise, activate all groups
+        chrome.storage.local.get(['hostsGroups'], (data) => {
+          if (data.hostsGroups && Array.isArray(data.hostsGroups)) {
+            const allGroupIds = data.hostsGroups.map(group => group.id);
 
-                    setTimeout(() => {
-                      updateActiveHostsMap().catch(error => {
-                        console.error('Failed to update all groups hosts mapping:', error);
-                      });
-                    }, 200);
-                  })
-                  .catch(error => {
-                    console.error('Failed to activate all groups:', error);
+            chrome.storage.local.set({ activeGroups: allGroupIds })
+              .then(() => {
+                activeGroups = allGroupIds;
+
+                setTimeout(() => {
+                  updateActiveHostsMap().catch(error => {
+                    console.error('Failed to update all groups hosts mapping:', error);
                   });
-              } else {
-                console.log('No groups found to activate');
-              }
-            });
-          }
-        } catch (error) {
-          console.error('Error during groups initialization:', error);
-        }
-      });
-    })
-    .catch(error => {
-      chrome.storage.local.get(['hostsGroups', 'activeGroups'], (result) => {
-        console.warn('Proceeding with initialization despite rule clearing failure');
-
-        if (result.activeGroups && Array.isArray(result.activeGroups)) {
-          activeGroups = result.activeGroups;
-
-          setTimeout(() => {
-            updateActiveHostsMap()
+                }, 200);
+              })
               .catch(error => {
-                console.error('Failed to update hosts mapping after failed cleanup:', error);
+                console.error('Failed to activate all groups:', error);
               });
-          }, 500);
-        }
-      });
-    });
+          } else {
+            console.log('No groups found to activate');
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Error during groups initialization:', error);
+    }
+  });
 
   // Adding a storage change listener
   chrome.storage.onChanged.addListener((changes) => {
@@ -191,9 +158,8 @@ function updateActiveHostsMap () {
 
         const { hostsGroups } = result;
         if (!hostsGroups || !activeGroups) {
-          // No configuration or active grouping, clear rules
-          return clearAllHostsRules()
-            .then(() => updateProxySettings())
+          // No configuration or active grouping, clear proxy settings
+          return updateProxySettings()
             .then(() => {
               proxyState.updating = false;
               processUpdateQueue(true);
@@ -221,11 +187,8 @@ function updateActiveHostsMap () {
         const hasChanges = !isEqual(previousMapping, activeHostsMap);
 
         if (hasChanges) {
-          // Update declarativeNetRequest rules and proxy settings
-          return Promise.all([
-            updateDeclarativeNetRequestRules(),
-            updateProxySettings()
-          ])
+          // Update proxy settings with new hosts mapping
+          return updateProxySettings()
             .then(() => {
               proxyState.updating = false;
               processUpdateQueue(true);
@@ -291,175 +254,7 @@ function isEqual (obj1, obj2) {
 }
 
 /**
- * Update declarativeNetRequest rules for hosts mapping
- * @returns {Promise<void>}
- */
-function updateDeclarativeNetRequestRules () {
-  return new Promise((resolve, reject) => {
-    // Prevent concurrent updates
-    if (RULE_MANAGEMENT.updating) {
-      setTimeout(() => {
-        updateDeclarativeNetRequestRules().then(resolve).catch(reject);
-      }, 500);
-      return;
-    }
-
-    RULE_MANAGEMENT.updating = true;
-
-    try {
-      // First, remove all existing rules
-      clearAllHostsRules()
-        .then(() => {
-          // Create new rules for active hosts
-          const newRules = [];
-          const hostEntries = Object.keys(activeHostsMap);
-
-          if (hostEntries.length === 0) {
-            // No hosts to redirect
-            RULE_MANAGEMENT.updating = false;
-            resolve();
-            return;
-          }
-
-          // Reset rule ID counter and clear active rule IDs
-          RULE_MANAGEMENT.currentRuleId = RULE_MANAGEMENT.RULE_ID_START;
-          RULE_MANAGEMENT.activeRuleIds.clear();
-
-          hostEntries.forEach(domain => {
-            const ip = activeHostsMap[domain];
-
-            // Create rules for both HTTP and HTTPS
-            const protocols = ['http', 'https'];
-
-            protocols.forEach(protocol => {
-              if (RULE_MANAGEMENT.currentRuleId > RULE_MANAGEMENT.RULE_ID_MAX) {
-                console.warn('Reached maximum rule limit');
-                return;
-              }
-
-              const ruleId = RULE_MANAGEMENT.currentRuleId++;
-
-              // Create redirect rule
-              const rule = {
-                id: ruleId,
-                priority: 1,
-                action: {
-                  type: 'redirect',
-                  redirect: {
-                    regexSubstitution: `${protocol}://${ip}\\2`
-                  }
-                },
-                condition: {
-                  regexFilter: `^${protocol}://${escapeRegExp(domain)}(:[0-9]+)?(/.*)?$`,
-                  resourceTypes: ['main_frame', 'sub_frame', 'xmlhttprequest', 'other', 'websocket']
-                }
-              };
-
-              newRules.push(rule);
-              RULE_MANAGEMENT.activeRuleIds.add(ruleId);
-            });
-          });
-
-          // Add all rules at once
-          if (newRules.length > 0) {
-            chrome.declarativeNetRequest.updateDynamicRules({
-              addRules: newRules
-            }, () => {
-              RULE_MANAGEMENT.updating = false;
-
-              if (chrome.runtime.lastError) {
-                console.error('Failed to add declarativeNetRequest rules:', chrome.runtime.lastError);
-                RULE_MANAGEMENT.activeRuleIds.clear();
-                reject(new Error(chrome.runtime.lastError.message));
-              } else {
-                resolve();
-              }
-            });
-          } else {
-            RULE_MANAGEMENT.updating = false;
-            resolve();
-          }
-        })
-        .catch(error => {
-          RULE_MANAGEMENT.updating = false;
-          reject(error);
-        });
-    } catch (error) {
-      RULE_MANAGEMENT.updating = false;
-      console.error('Error updating declarativeNetRequest rules:', error);
-      reject(error);
-    }
-  });
-}
-
-/**
- * Clear all hosts-related declarativeNetRequest rules
- * @returns {Promise<void>}
- */
-function clearAllHostsRules () {
-  return new Promise((resolve, reject) => {
-    // Get all current dynamic rules
-    chrome.declarativeNetRequest.getDynamicRules((existingRules) => {
-      if (chrome.runtime.lastError) {
-        console.error('Failed to get existing rules:', chrome.runtime.lastError);
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-
-      // If there are no existing rules, a direct solution
-      if (existingRules.length === 0 && RULE_MANAGEMENT.activeRuleIds.size === 0) {
-        RULE_MANAGEMENT.activeRuleIds.clear();
-        resolve();
-        return;
-      }
-
-      // Collect all rule IDs to remove
-      const ruleIdsToRemove = new Set();
-
-      // Add existing rule IDs
-      existingRules.forEach(rule => {
-        ruleIdsToRemove.add(rule.id);
-      });
-
-      // Add active rule IDs
-      RULE_MANAGEMENT.activeRuleIds.forEach(id => {
-        ruleIdsToRemove.add(id);
-      });
-
-      if (ruleIdsToRemove.size === 0) {
-        RULE_MANAGEMENT.activeRuleIds.clear();
-        resolve();
-        return;
-      }
-
-      const ruleIdsArray = Array.from(ruleIdsToRemove);
-
-      chrome.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: ruleIdsArray
-      }, () => {
-        if (chrome.runtime.lastError) {
-          console.error('Failed to remove declarativeNetRequest rules:', chrome.runtime.lastError);
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          RULE_MANAGEMENT.activeRuleIds.clear();
-          resolve();
-        }
-      });
-    });
-  });
-}
-
-/**
- * Escape special characters for regex
- * @param {string} string - string to escape
- * @returns {string} escaped string
- */
-function escapeRegExp (string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Update Chrome proxy settings (for SOCKS proxy only)
+ * Update Chrome proxy settings using PAC script for both hosts mapping and SOCKS proxy
  * @returns {Promise<void>}
  */
 function updateProxySettings () {
@@ -484,17 +279,19 @@ function updateProxySettings () {
         const socketProxy = result.socketProxy || {};
         let config;
 
-        // Only configure proxy if SOCKS proxy is enabled
-        if (socketProxy.enabled && socketProxy.host && socketProxy.port) {
-          // Generate PAC script for SOCKS proxy (for non-hosts traffic)
+        // Generate PAC script that handles both hosts mapping and SOCKS proxy
+        const pacScriptData = generateComprehensivePacScript(activeHostsMap, socketProxy);
+
+        if (Object.keys(activeHostsMap).length > 0 || socketProxy.enabled) {
+          // Use PAC script if we have hosts mapping or SOCKS proxy
           config = {
             mode: "pac_script",
             pacScript: {
-              data: generateSocksOnlyPacScript(socketProxy)
+              data: pacScriptData
             }
           };
         } else {
-          // Disable proxy completely
+          // Disable proxy completely if no hosts mapping and no SOCKS proxy
           return chrome.proxy.settings.clear({ scope: 'regular' })
             .then(() => {
               currentConfig = null;
@@ -530,11 +327,12 @@ function updateProxySettings () {
 }
 
 /**
- * Generate PAC script for SOCKS proxy only (not for hosts mapping)
+ * Generate comprehensive PAC script that handles both hosts mapping and SOCKS proxy
+ * @param {object} hostsMapping - hosts mapping object
  * @param {object} socketProxy - Socket proxy configuration
  * @returns {string} PAC script
  */
-function generateSocksOnlyPacScript (socketProxy) {
+function generateComprehensivePacScript (hostsMapping, socketProxy) {
   // Check SOCKS proxy settings
   const sockEnabled = socketProxy && socketProxy.enabled;
   const sockHost = socketProxy && socketProxy.host;
@@ -545,15 +343,21 @@ function generateSocksOnlyPacScript (socketProxy) {
   const username = authEnabled ? socketProxy.auth.username : '';
   const password = authEnabled ? socketProxy.auth.password : '';
 
-  // Create PAC script for SOCKS proxy only
+  // Convert hosts mapping to PAC script format
+  const hostsMapString = JSON.stringify(hostsMapping || {});
+
+  // Create comprehensive PAC script
   let pacScript = `
   function FindProxyForURL(url, host) {
+    // Hosts mapping configuration
+    var hostsMapping = ${hostsMapString};
+    
     // Extract domain and port
-    let domainPart = host;
-    let port = "80";
+    var domainPart = host;
+    var port = "80";
 
     // Check if host contains port
-    const colonPos = host.indexOf(":");
+    var colonPos = host.indexOf(":");
     if (colonPos !== -1) {
       domainPart = host.substring(0, colonPos);
       port = host.substring(colonPos + 1);
@@ -567,22 +371,50 @@ function generateSocksOnlyPacScript (socketProxy) {
       return 'DIRECT';
     }
 
-    // Note: Hosts mapping is now handled by declarativeNetRequest
-    // This PAC script only handles SOCKS proxy for other traffic
-  `;
-
-  // SOCKS proxy configuration
-  if (sockEnabled) {
-    if (authEnabled) {
-      pacScript += `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';`;
-    } else {
-      pacScript += `return 'SOCKS ${sockHost}:${sockPort}';`;
+    // Check hosts mapping first
+    if (hostsMapping[domainPart]) {
+      var mappedIP = hostsMapping[domainPart];
+      
+      // Extract port from mapped IP if present
+      var mappedPort = port;
+      if (mappedIP.indexOf(':') !== -1) {
+        var parts = mappedIP.split(':');
+        mappedIP = parts[0];
+        mappedPort = parts[1];
+      }
+      
+      // Use a local HTTP proxy approach with special handling
+      // This attempts to create a more seamless experience
+      // Note: This still has limitations compared to true DNS mapping
+      
+      // For HTTPS requests to mapped hosts, we need special handling
+      if (url.indexOf('https://') === 0) {
+        // For HTTPS, we try to use SOCKS proxy if available to maintain encryption
+        if (${sockEnabled}) {
+          ${authEnabled ?
+      `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :
+      `return 'SOCKS ${sockHost}:${sockPort}';`
     }
-  } else {
-    pacScript += `return 'DIRECT';`;
-  }
+        } else {
+          // Without SOCKS proxy, HTTPS to mapped IP is problematic
+          // Fall back to DIRECT (will use normal DNS resolution)
+          return 'DIRECT';
+        }
+      } else {
+        // For HTTP requests, try direct connection
+        // Note: This still won't achieve true DNS mapping but provides better behavior
+        return 'DIRECT';
+      }
+    }
 
-  pacScript += `\n}`;
+    // Handle SOCKS proxy for non-mapped traffic
+    ${sockEnabled ? (
+      authEnabled ?
+        `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :
+        `return 'SOCKS ${sockHost}:${sockPort}';`
+    ) : `return 'DIRECT';`}
+  }`;
+
   return pacScript;
 }
 

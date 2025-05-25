@@ -5,8 +5,7 @@
   "description": "轻松管理本地Hosts映射，支持分组切换和Socket代理，让开发测试更高效。",
   "permissions": [
     "proxy",
-    "storage",
-    "declarativeNetRequest"
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -27,8 +26,5 @@
     "16": "images/icon16.png",
     "48": "images/icon48.png",
     "128": "images/icon128.png"
-  },
-  "declarative_net_request": {
-    "rule_resources": []
   }
 }

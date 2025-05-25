@@ -41,8 +41,8 @@ class StateService {
       ips: new Map()      // ip -> [groupId, hostId][]
     };
 
-    // declarativeNetRequest相关状态
-    this.declarativeNetRequestState = {
+    // 相关状态
+    this.pacProxyState = {
       updating: false,
       lastUpdateTime: 0,
       updateCount: 0
@@ -234,7 +234,7 @@ class StateService {
   }
 
   /**
-   * 更新代理设置和declarativeNetRequest规则
+   * 更新PAC脚本代理设置
    * @returns {Promise<void>}
    */
   updateProxySettings () {
@@ -242,7 +242,7 @@ class StateService {
       try {
         // 防止过于频繁的更新
         const now = Date.now();
-        if (this.declarativeNetRequestState.updating) {
+        if (this.pacProxyState.updating) {
           // 如果正在更新，等待一段时间后重试
           setTimeout(() => {
             this.updateProxySettings().then(resolve).catch(reject);
@@ -250,19 +250,19 @@ class StateService {
           return;
         }
 
-        this.declarativeNetRequestState.updating = true;
-        this.declarativeNetRequestState.lastUpdateTime = now;
-        this.declarativeNetRequestState.updateCount++;
+        this.pacProxyState.updating = true;
+        this.pacProxyState.lastUpdateTime = now;
+        this.pacProxyState.updateCount++;
 
-        // 超时处理，因为declarativeNetRequest可能需要更多时间
+        // 超时处理
         const timeoutId = setTimeout(() => {
-          this.declarativeNetRequestState.updating = false;
+          this.pacProxyState.updating = false;
           reject(new Error('更新代理设置和规则超时'));
         }, 15000);
 
         chrome.runtime.sendMessage({ action: 'updateProxySettings' }, response => {
           clearTimeout(timeoutId);
-          this.declarativeNetRequestState.updating = false;
+          this.pacProxyState.updating = false;
 
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
@@ -273,7 +273,7 @@ class StateService {
           }
         });
       } catch (error) {
-        this.declarativeNetRequestState.updating = false;
+        this.pacProxyState.updating = false;
         reject(error);
       }
     });
@@ -425,7 +425,7 @@ class StateService {
     this.state.activeGroups = this.state.activeGroups.filter(id => id !== groupId);
 
     try {
-      // 立即保存，不使用节流，因为需要立即更新declarativeNetRequest规则
+      // 立即保存，不使用节流，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -456,7 +456,7 @@ class StateService {
     }
 
     try {
-      // 立即保存，因为需要立即更新declarativeNetRequest规则
+      // 立即保存，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -489,7 +489,7 @@ class StateService {
     group.hosts.push(host);
 
     try {
-      // 立即保存，因为需要立即更新declarativeNetRequest规则
+      // 立即保存，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -579,7 +579,7 @@ class StateService {
     this.state.hostsGroups[groupIndex].hosts = group.hosts.filter(h => h.id !== hostId);
 
     try {
-      // 立即保存，因为需要立即更新declarativeNetRequest规则
+      // 立即保存，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -727,7 +727,7 @@ class StateService {
     // 如果有导入的规则，保存状态
     if (imported > 0) {
       try {
-        // 立即保存，因为需要立即更新declarativeNetRequest规则
+        // 立即保存，因为需要立即更新规则
         await this.saveState(true);
         return { success: true, imported, skipped };
       } catch (error) {
@@ -977,12 +977,12 @@ class StateService {
   }
 
   /**
-   * 获取declarativeNetRequest状态
-   * @returns {object} declarativeNetRequest状态信息
+   * 获取PAC脚本代理状态
+   * @returns {object} PAC脚本代理状态信息
    */
-  getDeclarativeNetRequestState () {
+  getPacProxyState () {
     return {
-      ...this.declarativeNetRequestState,
+      ...this.pacProxyState,
       hostsCount: Object.keys(this.state.hostsGroups.reduce((acc, group) => {
         if (this.state.activeGroups.includes(group.id)) {
           group.hosts.forEach(host => {

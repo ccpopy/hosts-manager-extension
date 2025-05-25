@@ -38,7 +38,7 @@ export default class ImportPage {
 
     // 提示信息
     const importNotice = createNotice(
-      '支持批量导入和导出Hosts规则。导入：支持文本输入和文件上传，可导入纯文本或JSON格式。导出：可选择特定分组或全部分组，支持纯文本和JSON格式。所有操作将立即更新网络请求规则。',
+      '支持批量导入和导出Hosts规则。导入：支持文本输入和文件上传，可导入纯文本或JSON格式。导出：可选择特定分组或全部分组，支持纯文本和JSON格式。所有操作将立即更新代理规则。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -1037,7 +1037,7 @@ export default class ImportPage {
           successMessage += `（包含 ${result.duplicates.length} 条重复规则）`;
         }
 
-        Message.success(successMessage + '，网络请求规则已更新');
+        Message.success(successMessage + '，代理规则已更新');
 
         // 清空文本框
         this.batchTextarea.value = '';

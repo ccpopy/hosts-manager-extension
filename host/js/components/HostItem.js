@@ -439,7 +439,7 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
           onUpdate('updated');
         }
 
-        Message.success('规则更新成功，网络请求规则已更新');
+        Message.success('规则更新成功，代理规则已更新');
       } else {
         Message.error('IP和域名组合已存在，无法更新');
       }
@@ -616,7 +616,7 @@ export function createAddHostForm (groupId, container, onAdd) {
           onAdd(result.host);
         }
 
-        Message.success('规则添加成功，网络请求规则已更新');
+        Message.success('规则添加成功，代理规则已更新');
       } else {
         Message.error(result.message);
       }
@@ -761,7 +761,7 @@ export function createAddHostForm (groupId, container, onAdd) {
           onAdd(newHost);
         }
 
-        Message.success('规则添加成功，网络请求规则已更新');
+        Message.success('规则添加成功，代理规则已更新');
       } else {
         Message.error('规则已存在或格式无效');
       }

@@ -61,7 +61,7 @@ export default class ProxyPage {
 
     // 提示信息
     const proxyNotice = createNotice(
-      '可选配置一个SOCKS代理，用于不匹配hosts规则的请求。支持用户名和密码认证。hosts映射现在使用declarativeNetRequest API处理，代理仅用于其他流量。',
+      '可选配置一个SOCKS代理，用于不匹配hosts规则的请求。支持用户名和密码认证。代理仅用于其他流量。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -589,7 +589,7 @@ export default class ProxyPage {
 
       if (success) {
         // 显示成功消息
-        Message.success('代理设置已保存并应用，网络请求规则已更新');
+        Message.success('代理设置已保存并应用，代理规则已更新');
       } else {
         Message.error('保存代理设置失败，请重试');
       }

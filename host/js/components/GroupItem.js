@@ -222,7 +222,7 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
 
           // 显示成功消息
           const actionText = checkbox.checked ? '启用' : '禁用';
-          Message.success(`分组 "${group.name}" 已${actionText}，网络请求规则已更新`);
+          Message.success(`分组 "${group.name}" 已${actionText}，代理规则已更新`);
         } else {
           // 操作失败，恢复状态
           checkbox.checked = !checkbox.checked;
@@ -619,7 +619,7 @@ function createGroupActions (group, groupItem, onUpdate) {
 
             // 显示成功消息
             const successMessage = hostsCount > 0
-              ? `分组 "${group.name}" 及其 ${hostsCount} 条规则已删除，网络请求规则已更新`
+              ? `分组 "${group.name}" 及其 ${hostsCount} 条规则已删除，代理规则已更新`
               : `分组 "${group.name}" 已删除`;
             Message.success(successMessage);
           }, 300);
