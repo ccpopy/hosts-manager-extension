@@ -239,48 +239,35 @@ async function handleDeleteHost (groupId, hostId, hostItem, onUpdate) {
     );
 
     if (confirmed) {
-      // 添加删除中状态
       hostItem.classList.add('deleting');
       hostItem.style.opacity = '0.5';
 
-      // 禁用所有按钮
       const buttons = hostItem.querySelectorAll('button');
       buttons.forEach(btn => btn.disabled = true);
 
-      // 执行删除操作
       const success = await StateService.deleteHost(groupId, hostId);
 
       if (success) {
-        // 触发自定义事件通知删除状态变化
         dispatchHostModifiedEvent(hostId, groupId, 'deleted');
 
-        // 添加动画效果
         hostItem.style.height = `${hostItem.offsetHeight}px`;
-        hostItem.style.opacity = '1';
+        hostItem.offsetHeight; // 触发重绘
 
-        // 触发重绘以启动动画
-        hostItem.offsetHeight;
-
-        // 应用删除动画
         hostItem.style.height = '0';
         hostItem.style.opacity = '0';
         hostItem.style.padding = '0';
         hostItem.style.margin = '0';
         hostItem.style.overflow = 'hidden';
 
-        // 动画完成后移除元素，300ms 与 CSS 动画时长匹配
         setTimeout(() => {
           if (hostItem.parentNode) {
             hostItem.parentNode.removeChild(hostItem);
           }
-
-          // 通知上层组件主机已删除
           if (onUpdate) {
             onUpdate('deleted');
           }
         }, 300);
       } else {
-        // 恢复状态
         hostItem.classList.remove('deleting');
         hostItem.style.opacity = '1';
         buttons.forEach(btn => btn.disabled = false);
@@ -291,11 +278,8 @@ async function handleDeleteHost (groupId, hostId, hostItem, onUpdate) {
     console.error('删除主机失败:', error);
     hostItem.classList.remove('deleting');
     hostItem.style.opacity = '1';
-
-    // 恢复按钮状态
     const buttons = hostItem.querySelectorAll('button');
     buttons.forEach(btn => btn.disabled = false);
-
     Message.error('删除规则失败：' + error.message);
   }
 }
@@ -809,62 +793,39 @@ export function createAddHostForm (groupId, container, onAdd) {
  * @returns {Promise<object>} - 结果对象
  */
 async function addRule (groupId, ruleText) {
-  // 解析规则
   const parsedRule = parseHostRule(ruleText);
 
   if (!parsedRule) {
-    return {
-      success: false,
-      message: '请输入有效的规则格式: [IP地址] [域名]'
-    };
+    return { success: false, message: '请输入有效的规则格式: [IP地址] [域名]' };
   }
 
   const { ip, domain } = parsedRule;
 
-  // 验证IP和域名
   if (!isValidIp(ip)) {
-    return {
-      success: false,
-      message: 'IP地址格式无效'
-    };
+    return { success: false, message: 'IP地址格式无效' };
   }
 
   if (!isValidDomain(domain)) {
-    return {
-      success: false,
-      message: '域名格式无效'
-    };
+    return { success: false, message: '域名格式无效' };
   }
 
-  // 规范化主机规则
   const normalized = normalizeHostRule(ip, domain);
   if (!normalized) {
-    return {
-      success: false,
-      message: '规则格式无效'
-    };
+    return { success: false, message: '规则格式无效' };
   }
 
-  // 创建新主机对象
   const newHost = {
     id: Date.now().toString(),
     ...normalized,
     enabled: true
   };
 
-  // 使用 StateService 添加主机
   const success = await StateService.addHost(groupId, newHost);
 
   if (success) {
-    return {
-      success: true,
-      host: newHost
-    };
+    return { success: true, host: newHost };
   } else {
-    return {
-      success: false,
-      message: '规则已存在或格式无效'
-    };
+    return { success: false, message: '规则已存在或格式无效' };
   }
 }
 

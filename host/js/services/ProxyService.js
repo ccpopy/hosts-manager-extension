@@ -14,7 +14,7 @@ export default class ProxyService {
     return new Promise((resolve, reject) => {
       try {
         const timeoutId = setTimeout(() => {
-          reject(new Error('更新代理设置超时，后台脚本可能未响应'));
+          reject(new Error('更新代理设置超时'));
         }, 10000);
 
         chrome.runtime.sendMessage({ action: 'updateProxySettings' }, (response) => {
@@ -362,33 +362,21 @@ export default class ProxyService {
 
   /**
    * 批量验证规则
-   * 在导入前验证所有规则的有效性
    * @param {string} rulesText - 规则文本
    * @returns {Promise<Object>} - 验证结果
    */
   static async validateBatchRules (rulesText) {
     if (!rulesText || typeof rulesText !== 'string') {
-      return {
-        valid: 0,
-        invalid: 0,
-        errors: [],
-        warnings: []
-      };
+      return { valid: 0, invalid: 0, errors: [], warnings: [] };
     }
 
     const lines = rulesText.split('\n');
-    const result = {
-      valid: 0,
-      invalid: 0,
-      errors: [],
-      warnings: []
-    };
+    const result = { valid: 0, invalid: 0, errors: [], warnings: [] };
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       const lineNumber = i + 1;
 
-      // 跳过空行和注释
       if (!line || line.startsWith('#')) {
         continue;
       }
@@ -407,7 +395,6 @@ export default class ProxyService {
 
       const { ip, domain } = parsedRule;
 
-      // 验证IP
       if (!isValidIp(ip)) {
         result.invalid++;
         result.errors.push({
@@ -418,7 +405,6 @@ export default class ProxyService {
         continue;
       }
 
-      // 验证域名
       if (!isValidDomain(domain)) {
         result.invalid++;
         result.errors.push({
@@ -429,7 +415,6 @@ export default class ProxyService {
         continue;
       }
 
-      // 检查是否为特殊域名
       if (domain.includes('localhost') || domain.includes('127.0.0.1')) {
         result.warnings.push({
           line: lineNumber,

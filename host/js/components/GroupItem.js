@@ -23,109 +23,78 @@ const THROTTLE_DELAY = 600;
  * @returns {HTMLElement} - 分组DOM元素
  */
 export function createGroupElement (group, isActive, onUpdate = null, onExpandToggle = null) {
-  try {
-    // 验证必要参数
-    if (!group || !group.id) {
-      console.error('创建分组元素失败: 无效的分组对象');
-      return document.createElement('div');
+  if (!group || !group.id) {
+    console.error('创建分组元素失败: 无效的分组对象');
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'group-item error';
+    errorDiv.textContent = '加载分组失败';
+    return errorDiv;
+  }
+
+  const uniqueId = `group-item-${++groupItemCounter}`;
+  const groupItem = document.createElement('div');
+  groupItem.className = 'group-item';
+  groupItem.id = uniqueId;
+  groupItem.dataset.groupId = group.id;
+  groupItem.dataset.active = String(isActive);
+
+  // 分组标题
+  const groupHeader = createGroupHeader(group, isActive, uniqueId, onUpdate);
+  groupItem.appendChild(groupHeader);
+
+  // 分组内容区域
+  const groupContent = document.createElement('div');
+  groupContent.className = 'group-content';
+  groupContent.style.display = 'none';
+  groupContent.id = `${uniqueId}-content`;
+
+  // 折叠/展开功能
+  const handleHeaderClick = (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.className === 'slider' ||
+      e.target.closest('.toggle-switch')) {
+      return;
     }
 
-    // 生成唯一ID
-    const uniqueId = `group-item-${++groupItemCounter}`;
+    const isExpanded = groupContent.style.display === 'none';
+    groupContent.style.display = isExpanded ? 'block' : 'none';
 
-    const groupItem = document.createElement('div');
-    groupItem.className = 'group-item';
-    groupItem.id = uniqueId;
-    groupItem.dataset.groupId = group.id;
-    groupItem.dataset.active = String(isActive);
+    const expandIcon = groupHeader.querySelector('.expand-icon');
+    if (expandIcon) {
+      expandIcon.innerHTML = isExpanded ?
+        '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>' :
+        '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
+    }
 
-    // 分组标题
-    const groupHeader = createGroupHeader(group, isActive, uniqueId, onUpdate);
-    groupItem.appendChild(groupHeader);
+    if (onExpandToggle) {
+      onExpandToggle(group.id, isExpanded);
+    }
+  };
 
-    // 分组内容区域
-    const groupContent = document.createElement('div');
-    groupContent.className = 'group-content';
-    groupContent.style.display = 'none';
-    groupContent.id = `${uniqueId}-content`;
+  groupHeader.addEventListener('click', handleHeaderClick);
 
-    // 折叠/展开功能
-    const handleHeaderClick = (e) => {
-      try {
-        // 避免点击切换开关时触发折叠
-        if (e.target.tagName === 'INPUT' || e.target.className === 'slider' ||
-          e.target.closest('.toggle-switch')) {
-          return;
-        }
+  // 渲染主机列表
+  renderHosts(group, groupContent, onUpdate);
 
-        const isExpanded = groupContent.style.display === 'none';
-        groupContent.style.display = isExpanded ? 'block' : 'none';
+  // 添加主机表单
+  const formTitle = document.createElement('div');
+  formTitle.className = 'section-title';
+  formTitle.style.marginTop = '16px';
+  formTitle.textContent = '添加新规则';
+  groupContent.appendChild(formTitle);
 
-        // 更新图标
-        const expandIcon = groupHeader.querySelector('.expand-icon');
-        if (expandIcon) {
-          expandIcon.innerHTML = isExpanded ?
-            '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>' :
-            '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
-        }
+  createAddHostForm(group.id, groupContent, async (newHost) => {
+    await updateHostsList(group.id, groupContent, onUpdate);
+    if (onUpdate) {
+      onUpdate(group.id, 'hostAdded');
+    }
+  });
 
-        // 触发展开/收起回调
-        if (onExpandToggle) {
-          try {
-            onExpandToggle(group.id, isExpanded);
-          } catch (error) {
-            console.error('处理展开/收起回调时出错:', error);
-          }
-        }
-      } catch (error) {
-        console.error('处理分组展开/收起时出错:', error);
-      }
-    };
+  // 分组编辑/删除操作
+  const actionButtons = createGroupActions(group, groupItem, onUpdate);
+  groupContent.appendChild(actionButtons);
 
-    // 添加点击事件监听器
-    groupHeader.addEventListener('click', handleHeaderClick);
-
-    // 渲染主机列表
-    renderHosts(group, groupContent, onUpdate);
-
-    // 添加主机表单
-    const formTitle = document.createElement('div');
-    formTitle.className = 'section-title';
-    formTitle.style.marginTop = '16px';
-    formTitle.textContent = '添加新规则';
-    groupContent.appendChild(formTitle);
-
-    // 添加主机表单，包含回调
-    createAddHostForm(group.id, groupContent, async (newHost) => {
-      try {
-        // 添加后更新主机列表
-        await updateHostsList(group.id, groupContent, onUpdate);
-
-        // 通知上层组件
-        if (onUpdate) {
-          onUpdate(group.id, 'hostAdded');
-        }
-      } catch (error) {
-        console.error('处理新增主机回调失败:', error);
-        Message.error('更新主机列表失败，请刷新页面');
-      }
-    });
-
-    // 分组编辑/删除操作
-    const actionButtons = createGroupActions(group, groupItem, onUpdate);
-    groupContent.appendChild(actionButtons);
-
-    groupItem.appendChild(groupContent);
-
-    return groupItem;
-  } catch (error) {
-    console.error('创建分组元素时发生错误:', error);
-    // 返回一个基本元素，避免UI完全失败
-    const errorItem = document.createElement('div');
-    errorItem.className = 'group-item error';
-    errorItem.textContent = '加载分组失败';
-    return errorItem;
-  }
+  groupItem.appendChild(groupContent);
+  return groupItem;
 }
 
 /**

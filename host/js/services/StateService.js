@@ -243,7 +243,6 @@ class StateService {
         // 防止过于频繁的更新
         const now = Date.now();
         if (this.pacProxyState.updating) {
-          // 如果正在更新，等待一段时间后重试
           setTimeout(() => {
             this.updateProxySettings().then(resolve).catch(reject);
           }, 200);
@@ -254,27 +253,54 @@ class StateService {
         this.pacProxyState.lastUpdateTime = now;
         this.pacProxyState.updateCount++;
 
+        // 计算当前活跃的hosts映射数量，用于状态监控
+        const activeHostsCount = Object.keys(this.state.hostsGroups.reduce((acc, group) => {
+          if (this.state.activeGroups.includes(group.id)) {
+            group.hosts.forEach(host => {
+              if (host.enabled) {
+                acc[host.domain] = host.ip;
+              }
+            });
+          }
+          return acc;
+        }, {})).length;
+
         // 超时处理
         const timeoutId = setTimeout(() => {
           this.pacProxyState.updating = false;
-          reject(new Error('更新代理设置和规则超时'));
-        }, 15000);
+          reject(new Error(`代理设置更新超时，当前配置：${activeHostsCount}条hosts规则`));
+        }, 20000);
 
+        // 发送消息给背景脚本更新代理设置
         chrome.runtime.sendMessage({ action: 'updateProxySettings' }, response => {
           clearTimeout(timeoutId);
           this.pacProxyState.updating = false;
 
           if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
+            reject(new Error(`代理更新失败: ${chrome.runtime.lastError.message}`));
           } else if (response && !response.success) {
-            reject(new Error(response.error || '更新代理设置失败'));
+            reject(new Error(response.error || '代理设置更新失败'));
           } else {
+            // 触发成功更新事件
+            try {
+              const updateEvent = new CustomEvent('proxySettingsUpdated', {
+                detail: {
+                  success: true,
+                  hostsCount: activeHostsCount,
+                  socksEnabled: this.state.socketProxy.enabled,
+                  timestamp: now
+                }
+              });
+              document.dispatchEvent(updateEvent);
+            } catch (eventError) {
+              console.warn('触发代理更新事件失败:', eventError);
+            }
             resolve();
           }
         });
       } catch (error) {
         this.pacProxyState.updating = false;
-        reject(error);
+        reject(new Error(`代理设置更新异常：${error.message}`));
       }
     });
   }

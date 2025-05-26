@@ -346,13 +346,13 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
   // Convert hosts mapping to PAC script format
   const hostsMapString = JSON.stringify(hostsMapping || {});
 
-  // Create comprehensive PAC script
+  // Create comprehensive PAC script with correct hosts mapping logic
   let pacScript = `
   function FindProxyForURL(url, host) {
     // Hosts mapping configuration
     var hostsMapping = ${hostsMapString};
     
-    // Extract domain and port
+    // Extract domain and port from host
     var domainPart = host;
     var port = "80";
 
@@ -363,15 +363,18 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
       port = host.substring(colonPos + 1);
     }
 
-    // Convert to lowercase
+    // Convert to lowercase for case-insensitive matching
     domainPart = domainPart.toLowerCase();
 
-    // Direct connection to localhost
-    if (isPlainHostName(domainPart) || domainPart === 'localhost' || domainPart === '127.0.0.1') {
+    // Always use direct connection for localhost and local addresses
+    if (isPlainHostName(domainPart) || 
+        domainPart === 'localhost' || 
+        domainPart === '127.0.0.1' ||
+        domainPart.indexOf('.local') !== -1) {
       return 'DIRECT';
     }
 
-    // Check hosts mapping first
+    // Check hosts mapping first - CORE LOGIC FOR HOSTS RULES
     if (hostsMapping[domainPart]) {
       var mappedIP = hostsMapping[domainPart];
       
@@ -383,31 +386,29 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
         mappedPort = parts[1];
       }
       
-      // Use a local HTTP proxy approach with special handling
-      // This attempts to create a more seamless experience
-      // Note: This still has limitations compared to true DNS mapping
-      
-      // For HTTPS requests to mapped hosts, we need special handling
+      // Handle different protocols for hosts mapping
       if (url.indexOf('https://') === 0) {
-        // For HTTPS, we try to use SOCKS proxy if available to maintain encryption
+        // HTTPS requests with hosts mapping
+        // SSL certificate validation will fail with direct IP proxy
+        // Use SOCKS proxy if available, otherwise fallback to direct
         if (${sockEnabled}) {
           ${authEnabled ?
       `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :
       `return 'SOCKS ${sockHost}:${sockPort}';`
     }
         } else {
-          // Without SOCKS proxy, HTTPS to mapped IP is problematic
-          // Fall back to DIRECT (will use normal DNS resolution)
+          // HTTPS without SOCKS proxy - cannot work properly
+          // Browser will use normal DNS resolution
           return 'DIRECT';
         }
       } else {
-        // For HTTP requests, try direct connection
-        // Note: This still won't achieve true DNS mapping but provides better behavior
-        return 'DIRECT';
+        // HTTP requests with hosts mapping - THIS IS THE KEY FIX
+        // Return PROXY directive to redirect HTTP traffic to mapped IP
+        return 'PROXY ' + mappedIP + ':' + mappedPort;
       }
     }
 
-    // Handle SOCKS proxy for non-mapped traffic
+    // Handle non-mapped traffic with SOCKS proxy if enabled
     ${sockEnabled ? (
       authEnabled ?
         `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :

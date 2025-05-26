@@ -107,14 +107,11 @@ export default class HostsPage {
 
       if (error) {
         this.networkRequestState.failureCount++;
-        console.warn('Network request update failed:', error);
-
-        // 如果失败次数过多，显示警告
         if (this.networkRequestState.failureCount >= DECLARATIVE_NET_REQUEST_CONFIG.maxRetries) {
           this.showNetworkRequestWarning();
         }
       } else if (status === 'completed') {
-        this.networkRequestState.failureCount = 0; // 成功后重置失败计数
+        this.networkRequestState.failureCount = 0;
       }
     }
   }
@@ -159,15 +156,9 @@ export default class HostsPage {
    * 处理搜索清除事件
    */
   handleSearchCleared () {
-    // 如果有修改过的实体，强制刷新主视图
     if (this.modifiedEntities.hosts.size > 0 || this.modifiedEntities.groups.size > 0) {
-      // 清除所有缓存的主机和分组元素
       this.clearElementCache();
-
-      // 强制刷新主视图
       this.refreshMainView();
-
-      // 清空修改追踪
       this.modifiedEntities.hosts.clear();
       this.modifiedEntities.groups.clear();
     }
@@ -182,27 +173,19 @@ export default class HostsPage {
       const { hostId, groupId, action } = event.detail;
 
       if (hostId) {
-        // 记录修改的主机
         this.modifiedEntities.hosts.add(hostId);
-
-        // 清除相关缓存
         this.renderedHosts.delete(hostId);
         this.searchResultHosts.delete(`search-${groupId}-${hostId}`);
       }
 
       if (groupId) {
-        // 记录修改的分组
         this.modifiedEntities.groups.add(groupId);
       }
 
-      // 如果当前在搜索模式，且主机被修改，则刷新搜索结果
       if (this.searchKeyword && hostId) {
-        // 根据操作类型决定如何刷新
         if (action === 'deleted') {
-          // 如果是删除操作，重新执行搜索
           this.performSearch();
         } else if (action === 'updated' || action === 'toggled') {
-          // 如果是更新或状态切换，更新搜索结果中的对应元素
           this.updateSearchResultItem(groupId, hostId);
         }
       }
@@ -264,20 +247,14 @@ export default class HostsPage {
    */
   handleStateChange (state) {
     try {
-      // 如果有活跃搜索，更新搜索结果
       if (this.searchKeyword) {
-        // 使用防抖函数延迟执行搜索
         this.performSearch();
       } else {
-        // 如果没有搜索关键字，更新主视图
         this.updateMainView(state);
       }
-
-      // 更新添加分组表单区域
       this.updateAddGroupFormSection(state.showAddGroupForm);
     } catch (error) {
-      console.error('处理状态变化失败:', error);
-      // 显示错误提示，但不中断程序执行
+      console.error('状态变化处理失败:', error);
       this.showErrorNotification('状态更新失败，部分内容可能不是最新的');
     }
   }
@@ -347,7 +324,7 @@ export default class HostsPage {
 
     // 提示信息
     const notice = createNotice(
-      '可以创建多个分组，每个分组可以独立启用或禁用。',
+      '可以创建多个分组，每个分组可以独立启用或禁用。Chrome扩展通过PAC脚本实现hosts映射，存在一定技术限制。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
