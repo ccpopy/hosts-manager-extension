@@ -61,7 +61,7 @@ export default class ProxyPage {
 
     // 提示信息
     const proxyNotice = createNotice(
-      '可选配置一个SOCKS代理，用于不匹配hosts规则的请求。支持用户名和密码认证。代理仅用于其他流量。',
+      'Socket代理配置用于处理所有非hosts规则匹配的流量。当没有hosts规则时，启用的Socket代理将作为全局代理。代理也可用于处理https网站的hosts映射需求（通过代理服务器处理SSL证书问题）',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>

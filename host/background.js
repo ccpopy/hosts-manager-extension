@@ -282,8 +282,9 @@ function updateProxySettings () {
         // Generate PAC script that handles both hosts mapping and SOCKS proxy
         const pacScriptData = generateComprehensivePacScript(activeHostsMap, socketProxy);
 
-        if (Object.keys(activeHostsMap).length > 0 || socketProxy.enabled) {
-          // Use PAC script if we have hosts mapping or SOCKS proxy
+        // Use PAC script if we have hosts mapping OR SOCKS proxy is enabled
+        // This ensures SOCKS proxy works even without hosts rules
+        if (Object.keys(activeHostsMap).length > 0 || (socketProxy.enabled && socketProxy.host && socketProxy.port)) {
           config = {
             mode: "pac_script",
             pacScript: {
@@ -291,7 +292,7 @@ function updateProxySettings () {
             }
           };
         } else {
-          // Disable proxy completely if no hosts mapping and no SOCKS proxy
+          // Only clear proxy if both hosts mapping is empty AND SOCKS proxy is disabled
           return chrome.proxy.settings.clear({ scope: 'regular' })
             .then(() => {
               currentConfig = null;
@@ -389,26 +390,27 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
       // Handle different protocols for hosts mapping
       if (url.indexOf('https://') === 0) {
         // HTTPS requests with hosts mapping
-        // SSL certificate validation will fail with direct IP proxy
-        // Use SOCKS proxy if available, otherwise fallback to direct
+        // Due to SSL certificate validation, direct IP proxy won't work properly
+        // If SOCKS proxy is available, use it to handle HTTPS with hosts mapping
+        // Otherwise, fall back to direct connection (browser will use normal DNS)
         if (${sockEnabled}) {
           ${authEnabled ?
       `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :
       `return 'SOCKS ${sockHost}:${sockPort}';`
     }
         } else {
-          // HTTPS without SOCKS proxy - cannot work properly
+          // HTTPS without SOCKS proxy - cannot work properly due to SSL certificate
           // Browser will use normal DNS resolution
           return 'DIRECT';
         }
       } else {
-        // HTTP requests with hosts mapping - THIS IS THE KEY FIX
-        // Return PROXY directive to redirect HTTP traffic to mapped IP
+        // HTTP requests with hosts mapping work fine with PROXY directive
         return 'PROXY ' + mappedIP + ':' + mappedPort;
       }
     }
 
-    // Handle non-mapped traffic with SOCKS proxy if enabled
+    // For all non-mapped traffic, use SOCKS proxy if enabled
+    // This ensures SOCKS proxy works as a global proxy when no hosts rules match
     ${sockEnabled ? (
       authEnabled ?
         `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :

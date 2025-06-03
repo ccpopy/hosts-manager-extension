@@ -324,7 +324,7 @@ export default class HostsPage {
 
     // 提示信息
     const notice = createNotice(
-      '可以创建多个分组，每个分组可以独立启用或禁用。Chrome扩展通过PAC脚本实现hosts映射，存在一定技术限制。',
+      '可以创建多个分组，每个分组可以独立启用或禁用。注意：由于浏览器安全限制，扩展程序无法处理https网站的hosts映射（SSL证书验证会失败）。如需https网站的hosts映射，请配置系统hosts文件或使用Socket代理（通过第三方软件处理SSL证书问题）。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
