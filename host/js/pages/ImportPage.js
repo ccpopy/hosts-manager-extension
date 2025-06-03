@@ -1430,7 +1430,7 @@ export default class ImportPage {
       }
 
       exportData = {
-        version: '1.0.3',
+        version: `${manifest.version || '1.0.0'}`,
         exportDate: new Date().toISOString(),
         type: 'single-group',
         hostsGroups: [group],
@@ -1441,7 +1441,7 @@ export default class ImportPage {
     } else {
       // 导出全部分组
       exportData = {
-        version: '1.0.3',
+        version: `${manifest.version || '1.0.0'}`,
         exportDate: new Date().toISOString(),
         type: 'full-config',
         hostsGroups: state.hostsGroups,
