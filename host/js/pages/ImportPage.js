@@ -1421,6 +1421,7 @@ export default class ImportPage {
     let exportData;
     let fileName;
     const timestamp = new Date().toISOString().split('T')[0];
+    const manifest = chrome.runtime.getManifest();
 
     if (groupId) {
       // 导出单个分组
