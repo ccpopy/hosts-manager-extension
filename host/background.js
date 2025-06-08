@@ -338,6 +338,7 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
   const sockEnabled = socketProxy && socketProxy.enabled;
   const sockHost = socketProxy && socketProxy.host;
   const sockPort = socketProxy && socketProxy.port;
+  const protocol = socketProxy && socketProxy.protocol || 'SOCKS5'; // 获取协议类型
 
   // Check authentication settings
   const authEnabled = socketProxy && socketProxy.auth && socketProxy.auth.enabled;
@@ -346,6 +347,32 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
 
   // Convert hosts mapping to PAC script format
   const hostsMapString = JSON.stringify(hostsMapping || {});
+
+  // 根据协议类型生成代理字符串
+  let proxyString = '';
+  switch (protocol) {
+    case 'HTTP':
+    case 'HTTPS':
+      proxyString = authEnabled ?
+        `PROXY ${username}:${password}@${sockHost}:${sockPort}` :
+        `PROXY ${sockHost}:${sockPort}`;
+      break;
+    case 'SOCKS4':
+      proxyString = `SOCKS4 ${sockHost}:${sockPort}`;
+      break;
+    case 'SOCKS':
+      // 自动模式：先尝试SOCKS5，再尝试SOCKS4
+      proxyString = authEnabled ?
+        `SOCKS5 ${username}:${password}@${sockHost}:${sockPort}; SOCKS ${sockHost}:${sockPort}` :
+        `SOCKS5 ${sockHost}:${sockPort}; SOCKS ${sockHost}:${sockPort}`;
+      break;
+    case 'SOCKS5':
+    default:
+      proxyString = authEnabled ?
+        `SOCKS5 ${username}:${password}@${sockHost}:${sockPort}` :
+        `SOCKS5 ${sockHost}:${sockPort}`;
+      break;
+  }
 
   // Create comprehensive PAC script with correct hosts mapping logic
   let pacScript = `
@@ -394,10 +421,7 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
         // If SOCKS proxy is available, use it to handle HTTPS with hosts mapping
         // Otherwise, fall back to direct connection (browser will use normal DNS)
         if (${sockEnabled}) {
-          ${authEnabled ?
-      `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :
-      `return 'SOCKS ${sockHost}:${sockPort}';`
-    }
+          return '${proxyString}';
         } else {
           // HTTPS without SOCKS proxy - cannot work properly due to SSL certificate
           // Browser will use normal DNS resolution
@@ -411,11 +435,7 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
 
     // For all non-mapped traffic, use SOCKS proxy if enabled
     // This ensures SOCKS proxy works as a global proxy when no hosts rules match
-    ${sockEnabled ? (
-      authEnabled ?
-        `return 'SOCKS5 ${username}:${password}@${sockHost}:${sockPort}';` :
-        `return 'SOCKS ${sockHost}:${sockPort}';`
-    ) : `return 'DIRECT';`}
+    ${sockEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
   }`;
 
   return pacScript;

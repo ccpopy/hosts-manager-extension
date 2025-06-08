@@ -12,6 +12,7 @@ class StateService {
         host: '',
         port: '',
         enabled: false,
+        protocol: 'SOCKS5',
         auth: {
           enabled: false,
           username: '',

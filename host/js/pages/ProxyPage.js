@@ -155,6 +155,39 @@ export default class ProxyPage {
     portFormGroup.appendChild(portLabel);
     portFormGroup.appendChild(this.elements.portInput);
 
+    // 协议选择
+    const protocolFormGroup = document.createElement('div');
+    protocolFormGroup.className = 'form-group';
+
+    const protocolLabel = document.createElement('label');
+    protocolLabel.textContent = '协议类型:';
+    protocolLabel.htmlFor = 'proxy-protocol';
+
+    this.elements.protocolSelect = document.createElement('select');
+    this.elements.protocolSelect.id = 'proxy-protocol';
+    this.elements.protocolSelect.innerHTML = `
+      <option value="SOCKS5">SOCKS5 (推荐)</option>
+      <option value="SOCKS4">SOCKS4</option>
+      <option value="SOCKS">SOCKS (自动)</option>
+      <option value="HTTP">HTTP</option>
+      <option value="HTTPS">HTTPS</option>
+    `;
+    this.elements.protocolSelect.value = proxySettings.protocol || 'SOCKS5';
+
+    // 添加协议说明
+    const protocolHint = document.createElement('div');
+    protocolHint.className = 'instruction';
+    protocolHint.style.fontSize = '12px';
+    protocolHint.style.marginTop = '4px';
+    protocolHint.textContent = 'SOCKS5: 支持v2rayN、Shadowsocks等; SOCKS4: 旧版代理软件; HTTP/HTTPS: HTTP代理服务器';
+
+    protocolFormGroup.appendChild(protocolLabel);
+    protocolFormGroup.appendChild(this.elements.protocolSelect);
+    protocolFormGroup.appendChild(protocolHint);
+
+    // 将协议选择添加到表单
+    proxyForm.appendChild(protocolFormGroup);
+
     // 表单行
     const proxyForm = document.createElement('div');
     proxyForm.className = 'form-row';
@@ -564,12 +597,14 @@ export default class ProxyPage {
       const authEnabled = this.elements.authEnabledCheckbox ? this.elements.authEnabledCheckbox.checked : false;
       const username = this.elements.usernameInput ? this.elements.usernameInput.value.trim() : '';
       const password = this.elements.passwordInput ? this.elements.passwordInput.value.trim() : '';
+      const protocol = this.elements.protocolSelect ? this.elements.protocolSelect.value : 'SOCKS5';
 
       // 构建代理配置
       const proxyConfig = {
         host,
         port,
         enabled,
+        protocol,
         auth: {
           enabled: authEnabled,
           username,
