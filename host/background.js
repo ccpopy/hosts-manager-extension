@@ -281,6 +281,8 @@ function updateProxySettings () {
 
         // Generate PAC script that handles both hosts mapping and SOCKS proxy
         const pacScriptData = generateComprehensivePacScript(activeHostsMap, socketProxy);
+        console.log(Object.keys(activeHostsMap).length);
+        console.log((socketProxy.enabled && socketProxy.host && socketProxy.port));
 
         // Use PAC script if we have hosts mapping OR SOCKS proxy is enabled
         // This ensures SOCKS proxy works even without hosts rules
@@ -434,7 +436,7 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
 
     // For all non-mapped traffic, use SOCKS proxy if enabled
     // This ensures SOCKS proxy works as a global proxy when no hosts rules match
-    return ${sockEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
+    ${sockEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
   }`;
 
   return pacScript;
