@@ -45,44 +45,41 @@ function initializeExtension () {
       const socketProxy = result.socketProxy || {};
       const hasSocketProxy = socketProxy.enabled && socketProxy.host && socketProxy.port;
 
-      // If there are active groups OR socket proxy is enabled, update mapping
-      if ((result.activeGroups && Array.isArray(result.activeGroups)) || hasSocketProxy) {
-        activeGroups = result.activeGroups || [];
+      activeGroups = result.activeGroups || [];
 
-        // Delayed update mapping to ensure initialization is complete
-        setTimeout(() => {
-          updateActiveHostsMap().catch(error => {
-            console.error('Failed to update initial hosts mapping:', error);
-          });
-        }, 200);
-      } else {
-        // Otherwise, activate all groups
+      if (hasSocketProxy) {
+        updateActiveHostsMap().catch(error => {
+          console.error('Failed to update proxy settings immediately:', error);
+        });
+      }
+      // If there are active groups, update hosts mapping
+      else if (result.activeGroups && Array.isArray(result.activeGroups) && result.activeGroups.length > 0) {
+        updateActiveHostsMap().catch(error => {
+          console.error('Failed to update initial hosts mapping:', error);
+        });
+      }
+      // If no active groups, but there are groups, activate all groups
+      else {
         chrome.storage.local.get(['hostsGroups'], (data) => {
-          if (data.hostsGroups && Array.isArray(data.hostsGroups)) {
+          if (data.hostsGroups && Array.isArray(data.hostsGroups) && data.hostsGroups.length > 0) {
             const allGroupIds = data.hostsGroups.map(group => group.id);
 
             chrome.storage.local.set({ activeGroups: allGroupIds })
               .then(() => {
                 activeGroups = allGroupIds;
-
-                setTimeout(() => {
-                  updateActiveHostsMap().catch(error => {
-                    console.error('Failed to update all groups hosts mapping:', error);
-                  });
-                }, 200);
+                updateActiveHostsMap().catch(error => {
+                  console.error('Failed to update all groups hosts mapping:', error);
+                });
               })
               .catch(error => {
                 console.error('Failed to activate all groups:', error);
               });
-          } else {
-            // Even if no groups, still update proxy settings if Socket proxy is configured
-            if (hasSocketProxy) {
-              setTimeout(() => {
-                updateActiveHostsMap().catch(error => {
-                  console.error('Failed to update proxy settings:', error);
-                });
-              }, 200);
-            }
+          }
+          // If no groups exist, initialize with default group
+          else if (hasSocketProxy) {
+            updateActiveHostsMap().catch(error => {
+              console.error('Failed to update proxy settings:', error);
+            });
           }
         });
       }
@@ -91,7 +88,6 @@ function initializeExtension () {
     }
   });
 
-  // Adding a storage change listener
   chrome.storage.onChanged.addListener((changes) => {
     try {
       if (changes.hostsGroups || changes.activeGroups || changes.socketProxy) {
@@ -111,7 +107,6 @@ function initializeExtension () {
     }
   });
 
-  // Adding a message listener
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     try {
       if (message.action === 'updateProxySettings') {
@@ -168,8 +163,9 @@ function updateActiveHostsMap () {
         activeGroups = result.activeGroups || [];
 
         const { hostsGroups } = result;
-        if (!hostsGroups || !activeGroups) {
-          // No configuration or active grouping, clear proxy settings
+
+        // If no hostsGroups are configured, update proxy settings for Socket proxy only
+        if (!hostsGroups || !Array.isArray(hostsGroups)) {
           return updateProxySettings()
             .then(() => {
               proxyState.updating = false;
@@ -197,8 +193,10 @@ function updateActiveHostsMap () {
         // Check if mapping has changed
         const hasChanges = !isEqual(previousMapping, activeHostsMap);
 
-        if (hasChanges) {
-          // Update proxy settings with new hosts mapping
+        // If there are changes or this is the first run, update proxy settings
+        const isFirstRun = Object.keys(previousMapping).length === 0 && currentConfig === null;
+
+        if (hasChanges || isFirstRun) {
           return updateProxySettings()
             .then(() => {
               proxyState.updating = false;
@@ -327,7 +325,6 @@ function updateProxySettings () {
         chrome.proxy.settings.set({ value: config, scope: 'regular' })
           .then(() => {
             currentConfig = config;
-            console.log('Proxy settings updated successfully', { hasActiveHosts, hasSocketProxy });
             resolve();
           })
           .catch(error => {
