@@ -165,34 +165,25 @@ export default class ProxyPage {
 
     this.elements.protocolSelect = document.createElement('select');
     this.elements.protocolSelect.id = 'proxy-protocol';
+    this.elements.protocolSelect.title = 'SOCKS5: 支持v2rayN、Shadowsocks等; SOCKS4: 旧版代理软件; HTTP/HTTPS: HTTP代理服务器';
     this.elements.protocolSelect.innerHTML = `
       <option value="SOCKS5">SOCKS5 (推荐)</option>
       <option value="SOCKS4">SOCKS4</option>
-      <option value="SOCKS">SOCKS (自动)</option>
+      <option value="SOCKS">SOCKS</option>
       <option value="HTTP">HTTP</option>
       <option value="HTTPS">HTTPS</option>
     `;
     this.elements.protocolSelect.value = proxySettings.protocol || 'SOCKS5';
 
-    // 添加协议说明
-    const protocolHint = document.createElement('div');
-    protocolHint.className = 'instruction';
-    protocolHint.style.fontSize = '12px';
-    protocolHint.style.marginTop = '4px';
-    protocolHint.textContent = 'SOCKS5: 支持v2rayN、Shadowsocks等; SOCKS4: 旧版代理软件; HTTP/HTTPS: HTTP代理服务器';
-
     protocolFormGroup.appendChild(protocolLabel);
     protocolFormGroup.appendChild(this.elements.protocolSelect);
-    protocolFormGroup.appendChild(protocolHint);
-
-    // 将协议选择添加到表单
-    proxyForm.appendChild(protocolFormGroup);
 
     // 表单行
     const proxyForm = document.createElement('div');
     proxyForm.className = 'form-row';
     proxyForm.appendChild(hostFormGroup);
     proxyForm.appendChild(portFormGroup);
+    proxyForm.appendChild(protocolFormGroup);
     basicSettingsSection.appendChild(proxyForm);
 
     // 启用代理切换
@@ -516,6 +507,18 @@ export default class ProxyPage {
         this.elements.portInput.removeAttribute('required');
         this.elements.portInput.style.borderColor = '';
         this.elements.portInput.title = '';
+      }
+    }
+
+    if (this.elements.protocolSelect) {
+      this.elements.protocolSelect.disabled = !enabled;
+      // 确保协议选择没有required属性，除非代理启用
+      if (enabled) {
+        this.elements.protocolSelect.setAttribute('required', 'required');
+      } else {
+        this.elements.protocolSelect.removeAttribute('required');
+        this.elements.protocolSelect.style.borderColor = '';
+        this.elements.protocolSelect.title = '';
       }
     }
 
