@@ -281,12 +281,10 @@ function updateProxySettings () {
 
         // Generate PAC script that handles both hosts mapping and SOCKS proxy
         const pacScriptData = generateComprehensivePacScript(activeHostsMap, socketProxy);
-        console.log(Object.keys(activeHostsMap).length);
-        console.log((socketProxy.enabled && socketProxy.host && socketProxy.port));
 
         // Use PAC script if we have hosts mapping OR SOCKS proxy is enabled
         // This ensures SOCKS proxy works even without hosts rules
-        if (Object.keys(activeHostsMap).length > 0 || (socketProxy.enabled && socketProxy.host && socketProxy.port)) {
+        if (socketProxy.enabled && socketProxy.host && socketProxy.port) {
           config = {
             mode: "pac_script",
             pacScript: {
