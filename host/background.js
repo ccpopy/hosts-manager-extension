@@ -338,7 +338,7 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
   const sockEnabled = socketProxy && socketProxy.enabled;
   const sockHost = socketProxy && socketProxy.host;
   const sockPort = socketProxy && socketProxy.port;
-  const protocol = socketProxy && socketProxy.protocol || 'SOCKS5'; // 获取协议类型
+  const protocol = socketProxy && socketProxy.protocol || 'SOCKS5';
 
   // Check authentication settings
   const authEnabled = socketProxy && socketProxy.auth && socketProxy.auth.enabled;
@@ -348,7 +348,7 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
   // Convert hosts mapping to PAC script format
   const hostsMapString = JSON.stringify(hostsMapping || {});
 
-  // 根据协议类型生成代理字符串
+  // Construct the proxy string based on protocol and authentication
   let proxyString = '';
   switch (protocol) {
     case 'HTTP':
@@ -361,7 +361,6 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
       proxyString = `SOCKS4 ${sockHost}:${sockPort}`;
       break;
     case 'SOCKS':
-      // 自动模式：先尝试SOCKS5，再尝试SOCKS4
       proxyString = authEnabled ?
         `SOCKS5 ${username}:${password}@${sockHost}:${sockPort}; SOCKS ${sockHost}:${sockPort}` :
         `SOCKS5 ${sockHost}:${sockPort}; SOCKS ${sockHost}:${sockPort}`;
@@ -435,7 +434,7 @@ function generateComprehensivePacScript (hostsMapping, socketProxy) {
 
     // For all non-mapped traffic, use SOCKS proxy if enabled
     // This ensures SOCKS proxy works as a global proxy when no hosts rules match
-    ${sockEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
+    return ${sockEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
   }`;
 
   return pacScript;
