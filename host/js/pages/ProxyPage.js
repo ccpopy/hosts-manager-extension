@@ -518,7 +518,6 @@ export default class ProxyPage {
       } else {
         this.elements.protocolSelect.removeAttribute('required');
         this.elements.protocolSelect.style.borderColor = '';
-        this.elements.protocolSelect.title = '';
       }
     }
 
