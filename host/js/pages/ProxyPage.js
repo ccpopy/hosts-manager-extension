@@ -455,6 +455,7 @@ export default class ProxyPage {
       const testConfig = {
         host,
         port,
+        protocol: this.elements.protocolSelect ? this.elements.protocolSelect.value : 'SOCKS5',
         enabled: true,
         auth: {
           enabled: this.elements.authEnabledCheckbox.checked,
