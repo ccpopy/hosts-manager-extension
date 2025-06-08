@@ -22,8 +22,8 @@ const proxyState = {
  * Initialize extension
  */
 function initializeExtension () {
-  // Get stored groups and active groups
-  chrome.storage.local.get(['hostsGroups', 'activeGroups'], (result) => {
+  // Get stored groups, active groups, AND socket proxy settings
+  chrome.storage.local.get(['hostsGroups', 'activeGroups', 'socketProxy'], (result) => {
     try {
       // If there are no groups, create default groups
       if (!result.hostsGroups) {
@@ -41,9 +41,13 @@ function initializeExtension () {
         });
       }
 
-      // If there are active groups, update mapping
-      if (result.activeGroups && Array.isArray(result.activeGroups)) {
-        activeGroups = result.activeGroups;
+      // Check if Socket proxy is configured and enabled
+      const socketProxy = result.socketProxy || {};
+      const hasSocketProxy = socketProxy.enabled && socketProxy.host && socketProxy.port;
+
+      // If there are active groups OR socket proxy is enabled, update mapping
+      if ((result.activeGroups && Array.isArray(result.activeGroups)) || hasSocketProxy) {
+        activeGroups = result.activeGroups || [];
 
         // Delayed update mapping to ensure initialization is complete
         setTimeout(() => {
@@ -71,7 +75,14 @@ function initializeExtension () {
                 console.error('Failed to activate all groups:', error);
               });
           } else {
-            console.log('No groups found to activate');
+            // Even if no groups, still update proxy settings if Socket proxy is configured
+            if (hasSocketProxy) {
+              setTimeout(() => {
+                updateActiveHostsMap().catch(error => {
+                  console.error('Failed to update proxy settings:', error);
+                });
+              }, 200);
+            }
           }
         });
       }
@@ -83,7 +94,7 @@ function initializeExtension () {
   // Adding a storage change listener
   chrome.storage.onChanged.addListener((changes) => {
     try {
-      if (changes.hostsGroups || changes.activeGroups) {
+      if (changes.hostsGroups || changes.activeGroups || changes.socketProxy) {
         // Anti-shake updates to avoid frequent rule updates
         if (updateActiveHostsMap.timeoutId) {
           clearTimeout(updateActiveHostsMap.timeoutId);
@@ -282,9 +293,12 @@ function updateProxySettings () {
         // Generate PAC script that handles both hosts mapping and SOCKS proxy
         const pacScriptData = generateComprehensivePacScript(activeHostsMap, socketProxy);
 
+        // Check if we need to use PAC script
+        const hasActiveHosts = Object.keys(activeHostsMap).length > 0;
+        const hasSocketProxy = socketProxy.enabled && socketProxy.host && socketProxy.port;
+
         // Use PAC script if we have hosts mapping OR SOCKS proxy is enabled
-        // This ensures SOCKS proxy works even without hosts rules
-        if (socketProxy.enabled && socketProxy.host && socketProxy.port) {
+        if (hasActiveHosts || hasSocketProxy) {
           config = {
             mode: "pac_script",
             pacScript: {
@@ -313,6 +327,7 @@ function updateProxySettings () {
         chrome.proxy.settings.set({ value: config, scope: 'regular' })
           .then(() => {
             currentConfig = config;
+            console.log('Proxy settings updated successfully', { hasActiveHosts, hasSocketProxy });
             resolve();
           })
           .catch(error => {
