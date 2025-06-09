@@ -3,466 +3,496 @@
  * Handles hosts mapping using PAC script and proxy configuration
  */
 
-// Global variables store active host mapping and grouping
-let activeHostsMap = {};
-let activeGroups = [];
-let currentConfig = null;
-
-// Proxy settings state
-const proxyState = {
-  updating: false,
-  lastUpdateTime: 0,
-  updateQueue: [],
-  errorCount: 0,
+// Constants
+const CONSTANTS = {
+  PROXY_UPDATE_THROTTLE: 300,
   MAX_ERROR_COUNT: 3,
   ERROR_RESET_TIME: 60000,
+  UPDATE_TIMEOUT: 15000,
+  PROXY_CLEAR_DELAY: 100,
+  DEFAULT_PROXY_CONFIG: {
+    host: '',
+    port: '',
+    enabled: false,
+    protocol: 'SOCKS5',
+    auth: {
+      enabled: false,
+      username: '',
+      password: ''
+    }
+  }
 };
 
-/**
- * Initialize extension
- */
+// Global state
+const state = {
+  activeHostsMap: {},
+  activeGroups: [],
+  currentConfig: null,
+  proxyState: {
+    updating: false,
+    lastUpdateTime: 0,
+    updateQueue: [],
+    errorCount: 0,
+    clearTimeout: null
+  },
+  updateThrottleTimer: null,
+  lastConfigHash: null
+};
+
+// Initialize extension
 function initializeExtension () {
-  // Get stored groups, active groups, AND socket proxy settings
-  chrome.storage.local.get(['hostsGroups', 'activeGroups', 'socketProxy'], (result) => {
-    try {
-      // If there are no groups, create default groups
-      if (!result.hostsGroups) {
-        const defaultGroups = [
-          {
-            id: 'default',
-            name: 'Default Group',
-            hosts: [],
-            enabled: true
-          }
-        ];
+  loadInitialState()
+    .then(setupStorageListener)
+    .then(setupMessageListener)
+    .catch(handleInitializationError);
+}
 
-        chrome.storage.local.set({ hostsGroups: defaultGroups }).catch(error => {
-          console.error('Failed to initialize default grouping:', error);
-        });
-      }
+// Load initial state from storage
+async function loadInitialState () {
+  try {
+    const data = await getStorageData(['hostsGroups', 'activeGroups', 'socketProxy']);
 
-      // Check if Socket proxy is configured and enabled
-      const socketProxy = result.socketProxy || {};
-      const hasSocketProxy = socketProxy.enabled && socketProxy.host && socketProxy.port;
+    state.activeGroups = data.activeGroups || [];
+    const hasSocketProxy = isSocketProxyConfigured(data.socketProxy);
 
-      activeGroups = result.activeGroups || [];
-
-      if (hasSocketProxy) {
-        updateActiveHostsMap().catch(error => {
-          console.error('Failed to update proxy settings immediately:', error);
-        });
-      }
-      // If there are active groups, update hosts mapping
-      else if (result.activeGroups && Array.isArray(result.activeGroups) && result.activeGroups.length > 0) {
-        updateActiveHostsMap().catch(error => {
-          console.error('Failed to update initial hosts mapping:', error);
-        });
-      }
-      // If no active groups, but there are groups, activate all groups
-      else {
-        chrome.storage.local.get(['hostsGroups'], (data) => {
-          if (data.hostsGroups && Array.isArray(data.hostsGroups) && data.hostsGroups.length > 0) {
-            const allGroupIds = data.hostsGroups.map(group => group.id);
-
-            chrome.storage.local.set({ activeGroups: allGroupIds })
-              .then(() => {
-                activeGroups = allGroupIds;
-                updateActiveHostsMap().catch(error => {
-                  console.error('Failed to update all groups hosts mapping:', error);
-                });
-              })
-              .catch(error => {
-                console.error('Failed to activate all groups:', error);
-              });
-          }
-          // If no groups exist, initialize with default group
-          else if (hasSocketProxy) {
-            updateActiveHostsMap().catch(error => {
-              console.error('Failed to update proxy settings:', error);
-            });
-          }
-        });
-      }
-    } catch (error) {
-      console.error('Error during groups initialization:', error);
+    if (!data.hostsGroups) {
+      await createDefaultGroups();
+      return;
     }
-  });
 
+    if (hasSocketProxy || (state.activeGroups.length > 0)) {
+      await updateActiveHostsMap();
+    } else if (data.hostsGroups.length > 0) {
+      await activateAllGroups(data.hostsGroups);
+    }
+  } catch (error) {
+    console.error('Failed to load initial state:', error);
+    throw error;
+  }
+}
+
+// Create default groups if none exist
+async function createDefaultGroups () {
+  const defaultGroups = [{
+    id: 'default',
+    name: 'Default Group',
+    hosts: [],
+    enabled: true
+  }];
+
+  try {
+    await setStorageData({ hostsGroups: defaultGroups });
+  } catch (error) {
+    console.error('Failed to create default groups:', error);
+  }
+}
+
+// Activate all groups
+async function activateAllGroups (hostsGroups) {
+  const allGroupIds = hostsGroups.map(group => group.id);
+
+  try {
+    await setStorageData({ activeGroups: allGroupIds });
+    state.activeGroups = allGroupIds;
+    await updateActiveHostsMap();
+  } catch (error) {
+    console.error('Failed to activate all groups:', error);
+  }
+}
+
+// Setup storage change listener
+function setupStorageListener () {
   chrome.storage.onChanged.addListener((changes) => {
-    try {
-      if (changes.hostsGroups || changes.activeGroups || changes.socketProxy) {
-        // Anti-shake updates to avoid frequent rule updates
-        if (updateActiveHostsMap.timeoutId) {
-          clearTimeout(updateActiveHostsMap.timeoutId);
-        }
-
-        updateActiveHostsMap.timeoutId = setTimeout(() => {
-          updateActiveHostsMap().catch(error => {
-            console.error('Failed to update hosts mapping due to storage change:', error);
-          });
-        }, 300);
-      }
-    } catch (error) {
-      console.error('Error in storage change listener:', error);
-    }
-  });
-
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    try {
-      if (message.action === 'updateProxySettings') {
-        updateActiveHostsMap()
-          .then(() => {
-            if (sendResponse) {
-              sendResponse({ success: true });
-            }
-          })
-          .catch(error => {
-            console.error('Failed to process updateProxySettings message:', error);
-            if (sendResponse) {
-              sendResponse({
-                success: false,
-                error: error.message || 'Unknown error occurred'
-              });
-            }
-          });
-
-        return true;
-      }
-    } catch (error) {
-      console.error('Error in message listener:', error);
-      if (sendResponse) {
-        sendResponse({
-          success: false,
-          error: 'Message processing failed: ' + error.message
-        });
-      }
+    if (shouldUpdateHostsMap(changes)) {
+      throttledUpdateHostsMap();
     }
   });
 }
 
-/**
- * Update host mapping based on active grouping
- * @returns {Promise<void>}
- */
-function updateActiveHostsMap () {
-  // Prevent concurrent updates
-  if (proxyState.updating) {
-    return new Promise((resolve, reject) => {
-      proxyState.updateQueue.push({ resolve, reject });
+// Setup message listener
+function setupMessageListener () {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'updateProxySettings') {
+      handleUpdateProxyMessage(sendResponse);
+      return true;
+    }
+  });
+}
+
+// Handle update proxy message
+async function handleUpdateProxyMessage (sendResponse) {
+  try {
+    await updateActiveHostsMap();
+    sendResponse({ success: true });
+  } catch (error) {
+    console.error('Failed to update proxy settings:', error);
+    sendResponse({
+      success: false,
+      error: error.message || 'Unknown error occurred'
     });
   }
-
-  proxyState.updating = true;
-  proxyState.lastUpdateTime = Date.now();
-
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.get(['hostsGroups', 'activeGroups'])
-      .then(result => {
-        const previousMapping = { ...activeHostsMap };
-        activeHostsMap = {};
-        activeGroups = result.activeGroups || [];
-
-        const { hostsGroups } = result;
-
-        // If no hostsGroups are configured, update proxy settings for Socket proxy only
-        if (!hostsGroups || !Array.isArray(hostsGroups)) {
-          return updateProxySettings()
-            .then(() => {
-              proxyState.updating = false;
-              processUpdateQueue(true);
-              resolve();
-            })
-            .catch(error => {
-              proxyState.updating = false;
-              processUpdateQueue(false, error);
-              reject(error);
-            });
-        }
-
-        // Fill active host mapping
-        hostsGroups.forEach(group => {
-          if (activeGroups.includes(group.id)) {
-            group.hosts.forEach(hostEntry => {
-              if (hostEntry.enabled) {
-                activeHostsMap[hostEntry.domain] = hostEntry.ip;
-              }
-            });
-          }
-        });
-
-        // Check if mapping has changed
-        const hasChanges = !isEqual(previousMapping, activeHostsMap);
-
-        // If there are changes or this is the first run, update proxy settings
-        const isFirstRun = Object.keys(previousMapping).length === 0 && currentConfig === null;
-
-        if (hasChanges || isFirstRun) {
-          return updateProxySettings()
-            .then(() => {
-              proxyState.updating = false;
-              processUpdateQueue(true);
-              resolve();
-            })
-            .catch(error => {
-              proxyState.updating = false;
-              processUpdateQueue(false, error);
-              reject(error);
-            });
-        } else {
-          // No changes, skip update
-          proxyState.updating = false;
-          processUpdateQueue(true);
-          resolve();
-        }
-      })
-      .catch(error => {
-        console.error('Failed to get storage data:', error);
-        proxyState.updating = false;
-        processUpdateQueue(false, error);
-        reject(error);
-      });
-  });
 }
 
-/**
- * Handle the update queue
- * @param {boolean} success - whether the update was successful or not
- * @param {Error} [error] - error object
- */
-function processUpdateQueue (success, error) {
-  // Process all pending updates in the queue
-  while (proxyState.updateQueue.length > 0) {
-    const { resolve, reject } = proxyState.updateQueue.shift();
-    if (success) {
-      resolve();
-    } else {
-      reject(error);
-    }
+// Check if storage changes require hosts map update
+function shouldUpdateHostsMap (changes) {
+  return changes.hostsGroups || changes.activeGroups || changes.socketProxy;
+}
+
+// Throttled update hosts map
+function throttledUpdateHostsMap () {
+  if (state.updateThrottleTimer) {
+    clearTimeout(state.updateThrottleTimer);
+  }
+
+  state.updateThrottleTimer = setTimeout(() => {
+    updateActiveHostsMap().catch(error => {
+      console.error('Failed to update hosts mapping:', error);
+    });
+  }, CONSTANTS.PROXY_UPDATE_THROTTLE);
+}
+
+// Update active hosts map
+async function updateActiveHostsMap () {
+  if (state.proxyState.updating) {
+    return enqueueUpdate();
+  }
+
+  state.proxyState.updating = true;
+  state.proxyState.lastUpdateTime = Date.now();
+
+  try {
+    const data = await getStorageData(['hostsGroups', 'activeGroups']);
+
+    state.activeHostsMap = buildActiveHostsMap(data);
+    state.activeGroups = data.activeGroups || [];
+
+    await updateProxySettings();
+
+    processUpdateQueue(true);
+  } catch (error) {
+    processUpdateQueue(false, error);
+    throw error;
+  } finally {
+    state.proxyState.updating = false;
   }
 }
 
-/**
- * Depth comparison of two objects for equality
- * @param {object} obj1 - object1
- * @param {object} obj2 - object2
- * @returns {boolean} whether or not they are equal.
- */
-function isEqual (obj1, obj2) {
-  if (obj1 === obj2) return true;
+// Build active hosts map from storage data
+function buildActiveHostsMap (data) {
+  const hostsMap = {};
+  const { hostsGroups = [], activeGroups = [] } = data;
 
-  const keys1 = Object.keys(obj1);
-  const keys2 = Object.keys(obj2);
+  hostsGroups.forEach(group => {
+    if (activeGroups.includes(group.id)) {
+      group.hosts.forEach(host => {
+        if (host.enabled) {
+          hostsMap[host.domain] = host.ip;
+        }
+      });
+    }
+  });
 
-  if (keys1.length !== keys2.length) return false;
+  return hostsMap;
+}
 
-  for (const key of keys1) {
-    if (obj1[key] !== obj2[key]) return false;
+// Enqueue update request
+function enqueueUpdate () {
+  return new Promise((resolve, reject) => {
+    state.proxyState.updateQueue.push({ resolve, reject });
+  });
+}
+
+// Process update queue
+function processUpdateQueue (success, error) {
+  while (state.proxyState.updateQueue.length > 0) {
+    const { resolve, reject } = state.proxyState.updateQueue.shift();
+    success ? resolve() : reject(error);
+  }
+}
+
+// Update Chrome proxy settings
+async function updateProxySettings () {
+  if (!shouldContinueUpdate()) {
+    return;
+  }
+
+  state.proxyState.lastUpdateTime = Date.now();
+
+  try {
+    const socketProxy = await getSocketProxyConfig();
+    const hasActiveHosts = Object.keys(state.activeHostsMap).length > 0;
+    const hasSocketProxy = isSocketProxyConfigured(socketProxy);
+
+    // Clear any pending clear timeout
+    if (state.proxyState.clearTimeout) {
+      clearTimeout(state.proxyState.clearTimeout);
+      state.proxyState.clearTimeout = null;
+    }
+
+    // If neither hosts nor socket proxy is active, clear proxy immediately
+    if (!hasActiveHosts && !hasSocketProxy) {
+      await forceClearProxySettings();
+      return;
+    }
+
+    const config = generateProxyConfig(state.activeHostsMap, socketProxy);
+
+    // Generate config hash to detect real changes
+    const configHash = generateConfigHash(config);
+
+    if (state.lastConfigHash === configHash) {
+      return;
+    }
+
+    await applyProxyConfig(config);
+    state.currentConfig = config;
+    state.lastConfigHash = configHash;
+
+  } catch (error) {
+    handleProxyError(error);
+    throw error;
+  }
+}
+
+// Force clear proxy settings with retry
+async function forceClearProxySettings () {
+  try {
+    // First attempt: clear proxy settings
+    await clearProxySettings();
+
+    // Second attempt: ensure it's really cleared
+    state.proxyState.clearTimeout = setTimeout(async () => {
+      try {
+        await clearProxySettings();
+      } catch (error) {
+        console.error('Failed to clear proxy settings on retry:', error);
+      }
+    }, CONSTANTS.PROXY_CLEAR_DELAY);
+
+  } catch (error) {
+    console.error('Failed to clear proxy settings:', error);
+    throw error;
+  }
+}
+
+// Generate configuration hash for change detection
+function generateConfigHash (config) {
+  if (!config) return 'empty';
+
+  // Create a simplified version for hashing
+  const simplified = {
+    mode: config.mode,
+    hosts: Object.keys(state.activeHostsMap).sort().join(','),
+    pacData: config.pacScript ? config.pacScript.data.length : 0
+  };
+
+  return JSON.stringify(simplified);
+}
+
+// Check if update should continue based on error count
+function shouldContinueUpdate () {
+  const now = Date.now();
+
+  if (state.proxyState.errorCount >= CONSTANTS.MAX_ERROR_COUNT) {
+    if (now - state.proxyState.lastUpdateTime < CONSTANTS.ERROR_RESET_TIME) {
+      console.warn('Proxy update error count is too high, pausing updates');
+      return false;
+    }
+    state.proxyState.errorCount = 0;
   }
 
   return true;
 }
 
-/**
- * Update Chrome proxy settings using PAC script for both hosts mapping and SOCKS proxy
- * @returns {Promise<void>}
- */
-function updateProxySettings () {
-  return new Promise((resolve, reject) => {
-    // Check for excessive errors
-    const now = Date.now();
-    if (proxyState.errorCount >= proxyState.MAX_ERROR_COUNT) {
-      if (now - proxyState.lastUpdateTime < proxyState.ERROR_RESET_TIME) {
-        console.warn('Proxy update error count is too high, pausing updates');
-        return resolve();
-      } else {
-        // Reset error count
-        proxyState.errorCount = 0;
-      }
+// Get socket proxy configuration
+async function getSocketProxyConfig () {
+  const result = await getStorageData(['socketProxy']);
+  return result.socketProxy || CONSTANTS.DEFAULT_PROXY_CONFIG;
+}
+
+// Generate proxy configuration
+function generateProxyConfig (hostsMapping, socketProxy) {
+  return {
+    mode: "pac_script",
+    pacScript: {
+      data: generatePacScript(hostsMapping, socketProxy),
+      mandatory: false
     }
+  };
+}
 
-    proxyState.lastUpdateTime = now;
-
-    // Getting SOCKS proxy settings
-    chrome.storage.local.get(['socketProxy'])
-      .then(result => {
-        const socketProxy = result.socketProxy || {};
-        let config;
-
-        // Generate PAC script that handles both hosts mapping and SOCKS proxy
-        const pacScriptData = generateComprehensivePacScript(activeHostsMap, socketProxy);
-
-        // Check if we need to use PAC script
-        const hasActiveHosts = Object.keys(activeHostsMap).length > 0;
-        const hasSocketProxy = socketProxy.enabled && socketProxy.host && socketProxy.port;
-
-        // Use PAC script if we have hosts mapping OR SOCKS proxy is enabled
-        if (hasActiveHosts || hasSocketProxy) {
-          config = {
-            mode: "pac_script",
-            pacScript: {
-              data: pacScriptData
-            }
-          };
-        } else {
-          // Only clear proxy if both hosts mapping is empty AND SOCKS proxy is disabled
-          return chrome.proxy.settings.clear({ scope: 'regular' })
-            .then(() => {
-              currentConfig = null;
-              resolve();
-            })
-            .catch(error => {
-              handleProxyError(error);
-              reject(error);
-            });
-        }
-
-        // Check if configuration has changed
-        if (currentConfig && JSON.stringify(currentConfig) === JSON.stringify(config)) {
-          return resolve();
-        }
-
-        // Update configuration
-        chrome.proxy.settings.set({ value: config, scope: 'regular' })
-          .then(() => {
-            currentConfig = config;
-            resolve();
-          })
-          .catch(error => {
-            handleProxyError(error);
-            reject(error);
-          });
-      })
-      .catch(error => {
-        console.error('Failed to get Socket proxy settings:', error);
-        reject(error);
-      });
+// Clear proxy settings
+async function clearProxySettings () {
+  return new Promise((resolve, reject) => {
+    chrome.proxy.settings.clear({ scope: 'regular' }, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        state.currentConfig = null;
+        state.lastConfigHash = null;
+        resolve();
+      }
+    });
   });
 }
 
-/**
- * Generate comprehensive PAC script that handles both hosts mapping and SOCKS proxy
- * @param {object} hostsMapping - hosts mapping object
- * @param {object} socketProxy - Socket proxy configuration
- * @returns {string} PAC script
- */
-function generateComprehensivePacScript (hostsMapping, socketProxy) {
-  // Check SOCKS proxy settings
-  const sockEnabled = socketProxy && socketProxy.enabled;
-  const sockHost = socketProxy && socketProxy.host;
-  const sockPort = socketProxy && socketProxy.port;
-  const protocol = socketProxy && socketProxy.protocol || 'SOCKS5';
+// Apply proxy configuration
+async function applyProxyConfig (config) {
+  return new Promise((resolve, reject) => {
+    chrome.proxy.settings.set({ value: config, scope: 'regular' }, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve();
+      }
+    });
+  });
+}
 
-  // Check authentication settings
-  const authEnabled = socketProxy && socketProxy.auth && socketProxy.auth.enabled;
-  const username = authEnabled ? socketProxy.auth.username : '';
-  const password = authEnabled ? socketProxy.auth.password : '';
+// Generate PAC script with cache busting
+function generatePacScript (hostsMapping, socketProxy) {
+  const pacComponents = {
+    hostsMap: JSON.stringify(hostsMapping || {}),
+    socksEnabled: socketProxy && socketProxy.enabled,
+    proxyString: buildProxyString(socketProxy),
+    timestamp: Date.now()
+  };
 
-  // Convert hosts mapping to PAC script format
-  const hostsMapString = JSON.stringify(hostsMapping || {});
+  return buildPacScriptContent(pacComponents);
+}
 
-  // Construct the proxy string based on protocol and authentication
-  let proxyString = '';
+// Build proxy string based on configuration
+function buildProxyString (socketProxy) {
+  if (!socketProxy || !socketProxy.enabled || !socketProxy.host || !socketProxy.port) {
+    return '';
+  }
+
+  const { protocol = 'SOCKS5', host, port, auth } = socketProxy;
+  const authString = buildAuthString(auth);
+
   switch (protocol) {
     case 'HTTP':
     case 'HTTPS':
-      proxyString = authEnabled ?
-        `PROXY ${username}:${password}@${sockHost}:${sockPort}` :
-        `PROXY ${sockHost}:${sockPort}`;
-      break;
+      return authString
+        ? `PROXY ${authString}@${host}:${port}`
+        : `PROXY ${host}:${port}`;
     case 'SOCKS4':
-      proxyString = `SOCKS4 ${sockHost}:${sockPort}`;
-      break;
+      return `SOCKS4 ${host}:${port}`;
     case 'SOCKS':
-      proxyString = authEnabled ?
-        `SOCKS5 ${username}:${password}@${sockHost}:${sockPort}; SOCKS ${sockHost}:${sockPort}` :
-        `SOCKS5 ${sockHost}:${sockPort}; SOCKS ${sockHost}:${sockPort}`;
-      break;
-    case 'SOCKS5':
+      return authString
+        ? `SOCKS5 ${authString}@${host}:${port}; SOCKS ${host}:${port}`
+        : `SOCKS5 ${host}:${port}; SOCKS ${host}:${port}`;
     default:
-      proxyString = authEnabled ?
-        `SOCKS5 ${username}:${password}@${sockHost}:${sockPort}` :
-        `SOCKS5 ${sockHost}:${sockPort}`;
-      break;
+      return authString
+        ? `SOCKS5 ${authString}@${host}:${port}`
+        : `SOCKS5 ${host}:${port}`;
   }
+}
 
-  // Create comprehensive PAC script with correct hosts mapping logic
-  let pacScript = `
+// Build authentication string
+function buildAuthString (auth) {
+  if (!auth || !auth.enabled || !auth.username || !auth.password) {
+    return '';
+  }
+  return `${auth.username}:${auth.password}`;
+}
+
+// Build PAC script content with dynamic generation
+function buildPacScriptContent ({ hostsMap, socksEnabled, proxyString, timestamp }) {
+  // Add timestamp comment to ensure script is unique
+  return `
+  // Generated at: ${timestamp}
   function FindProxyForURL(url, host) {
-    // Hosts mapping configuration
-    var hostsMapping = ${hostsMapString};
+    var hostsMapping = ${hostsMap};
     
-    // Extract domain and port from host
     var domainPart = host;
     var port = "80";
-
-    // Check if host contains port
+    
     var colonPos = host.indexOf(":");
     if (colonPos !== -1) {
       domainPart = host.substring(0, colonPos);
       port = host.substring(colonPos + 1);
     }
-
-    // Convert to lowercase for case-insensitive matching
+    
     domainPart = domainPart.toLowerCase();
-
-    // Always use direct connection for localhost and local addresses
+    
+    // Direct connection for local addresses
     if (isPlainHostName(domainPart) || 
         domainPart === 'localhost' || 
         domainPart === '127.0.0.1' ||
         domainPart.indexOf('.local') !== -1) {
       return 'DIRECT';
     }
-
-    // Check hosts mapping first - CORE LOGIC FOR HOSTS RULES
+    
+    // Check hosts mapping
     if (hostsMapping[domainPart]) {
       var mappedIP = hostsMapping[domainPart];
-      
-      // Extract port from mapped IP if present
       var mappedPort = port;
+      
       if (mappedIP.indexOf(':') !== -1) {
         var parts = mappedIP.split(':');
         mappedIP = parts[0];
         mappedPort = parts[1];
       }
       
-      // Handle different protocols for hosts mapping
       if (url.indexOf('https://') === 0) {
-        // HTTPS requests with hosts mapping
-        // Due to SSL certificate validation, direct IP proxy won't work properly
-        // If SOCKS proxy is available, use it to handle HTTPS with hosts mapping
-        // Otherwise, fall back to direct connection (browser will use normal DNS)
-        if (${sockEnabled}) {
-          return '${proxyString}';
-        } else {
-          // HTTPS without SOCKS proxy - cannot work properly due to SSL certificate
-          // Browser will use normal DNS resolution
-          return 'DIRECT';
-        }
+        ${socksEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
       } else {
-        // HTTP requests with hosts mapping work fine with PROXY directive
         return 'PROXY ' + mappedIP + ':' + mappedPort;
       }
     }
-
-    // For all non-mapped traffic, use SOCKS proxy if enabled
-    // This ensures SOCKS proxy works as a global proxy when no hosts rules match
-    ${sockEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
+    
+    // Default proxy behavior
+    ${socksEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
   }`;
-
-  return pacScript;
 }
 
-/**
- * Handle proxy update errors
- * @param {Error} error - error object
- */
+// Handle proxy update errors
 function handleProxyError (error) {
-  proxyState.errorCount++;
+  state.proxyState.errorCount++;
 
-  // If there are too many errors, print a warning
-  if (proxyState.errorCount >= proxyState.MAX_ERROR_COUNT) {
-    console.warn(`Proxy settings update failed too many times (${proxyState.errorCount} times), will retry after ${proxyState.ERROR_RESET_TIME / 1000} seconds`);
+  if (state.proxyState.errorCount >= CONSTANTS.MAX_ERROR_COUNT) {
+    const resetTime = CONSTANTS.ERROR_RESET_TIME / 1000;
+    console.warn(`Proxy settings update failed ${state.proxyState.errorCount} times, will retry after ${resetTime} seconds`);
   }
+}
+
+// Handle initialization error
+function handleInitializationError (error) {
+  console.error('Extension initialization failed:', error);
+}
+
+// Utility functions
+function isSocketProxyConfigured (socketProxy) {
+  return socketProxy &&
+    socketProxy.enabled &&
+    socketProxy.host &&
+    socketProxy.port;
+}
+
+// Storage helpers with promise wrappers
+function getStorageData (keys) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve(result);
+      }
+    });
+  });
+}
+
+function setStorageData (data) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(data, () => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve();
+      }
+    });
+  });
 }
 
 // Initialize on extension installation/update

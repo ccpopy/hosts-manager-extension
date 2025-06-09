@@ -34,6 +34,10 @@ export default class HostsPage {
     this.searchResultsContainer = null;
     this.groupList = null;
 
+    // 绑定的事件处理器引用
+    this._boundHandleScroll = null;
+    this._boundHandleResize = null;
+
     // 跟踪展开状态的分组
     this.expandedGroups = new Set();
 
@@ -455,15 +459,29 @@ export default class HostsPage {
 
     this.virtualScroll.container = this.groupListContainer;
 
+    // 确保容器存在
+    if (!this.virtualScroll.container) {
+      console.warn('虚拟滚动容器不存在');
+      return;
+    }
+
     // 计算视口高度
-    this.virtualScroll.viewportHeight = window.innerHeight -
-      this.groupListContainer.getBoundingClientRect().top;
+    try {
+      const rect = this.virtualScroll.container.getBoundingClientRect();
+      this.virtualScroll.viewportHeight = window.innerHeight - rect.top;
+    } catch (error) {
+      this.virtualScroll.viewportHeight = 600;
+    }
+
+    // 绑定事件处理器，保存引用以便后续移除
+    this._boundHandleScroll = this.handleScroll.bind(this);
+    this._boundHandleResize = this.handleResize.bind(this);
 
     // 添加滚动监听
-    this.virtualScroll.container.addEventListener('scroll', this.handleScroll.bind(this));
+    this.virtualScroll.container.addEventListener('scroll', this._boundHandleScroll);
 
     // 添加窗口大小变化监听
-    window.addEventListener('resize', this.handleResize.bind(this));
+    window.addEventListener('resize', this._boundHandleResize);
 
     // 初始更新可见项
     this.updateVisibleItems();
@@ -475,9 +493,15 @@ export default class HostsPage {
   handleScroll () {
     if (!VIRTUALIZATION.enabled) return;
 
+    if (!this.virtualScroll.container) {
+      return;
+    }
+
     requestAnimationFrame(() => {
-      this.virtualScroll.scrollPosition = this.virtualScroll.container.scrollTop;
-      this.updateVisibleItems();
+      if (this.virtualScroll.container) {
+        this.virtualScroll.scrollPosition = this.virtualScroll.container.scrollTop;
+        this.updateVisibleItems();
+      }
     });
   }
 
@@ -487,9 +511,17 @@ export default class HostsPage {
   handleResize () {
     if (!VIRTUALIZATION.enabled) return;
 
-    this.virtualScroll.viewportHeight = window.innerHeight -
-      this.virtualScroll.container.getBoundingClientRect().top;
-    this.updateVisibleItems();
+    if (!this.groupListContainer) {
+      return;
+    }
+
+    try {
+      const rect = this.groupListContainer.getBoundingClientRect();
+      this.virtualScroll.viewportHeight = window.innerHeight - rect.top;
+      this.updateVisibleItems();
+    } catch (error) {
+      console.error('处理窗口大小变化时出错:', error);
+    }
   }
 
   /**
@@ -498,34 +530,42 @@ export default class HostsPage {
   updateVisibleItems () {
     if (!VIRTUALIZATION.enabled || !this.virtualScroll.container) return;
 
-    const state = StateService.getState();
-    const items = state.hostsGroups;
+    try {
+      const state = StateService.getState();
+      const items = state.hostsGroups;
 
-    // 如果总项数少于阈值，禁用虚拟化
-    if (items.length < VIRTUALIZATION.renderThreshold) {
-      this.renderAllGroups();
-      return;
+      // 如果总项数少于阈值，禁用虚拟化
+      if (items.length < VIRTUALIZATION.renderThreshold) {
+        this.renderAllGroups();
+        return;
+      }
+
+      const { scrollPosition, viewportHeight } = this.virtualScroll;
+      const { itemHeight, bufferSize } = VIRTUALIZATION;
+
+      // 计算可见范围
+      const startIndex = Math.max(0, Math.floor(scrollPosition / itemHeight) - bufferSize);
+      const endIndex = Math.min(
+        items.length - 1,
+        Math.ceil((scrollPosition + viewportHeight) / itemHeight) + bufferSize
+      );
+
+      // 更新可见项
+      this.virtualScroll.visibleItems = items.slice(startIndex, endIndex + 1);
+
+      // 更新滚动容器高度
+      this.virtualScroll.totalHeight = items.length * itemHeight;
+
+      // 安全地设置容器高度
+      if (this.virtualScroll.container && this.virtualScroll.container.style) {
+        this.virtualScroll.container.style.height = `${this.virtualScroll.totalHeight}px`;
+      }
+
+      // 渲染可见项
+      this.renderVisibleGroups();
+    } catch (error) {
+      console.error('更新可见项时出错:', error);
     }
-
-    const { scrollPosition, viewportHeight } = this.virtualScroll;
-    const { itemHeight, bufferSize } = VIRTUALIZATION;
-
-    // 计算可见范围
-    const startIndex = Math.max(0, Math.floor(scrollPosition / itemHeight) - bufferSize);
-    const endIndex = Math.min(
-      items.length - 1,
-      Math.ceil((scrollPosition + viewportHeight) / itemHeight) + bufferSize
-    );
-
-    // 更新可见项
-    this.virtualScroll.visibleItems = items.slice(startIndex, endIndex + 1);
-
-    // 更新滚动容器高度
-    this.virtualScroll.totalHeight = items.length * itemHeight;
-    this.virtualScroll.container.style.height = `${this.virtualScroll.totalHeight}px`;
-
-    // 渲染可见项
-    this.renderVisibleGroups();
   }
 
   /**
@@ -1232,8 +1272,15 @@ export default class HostsPage {
 
       // 移除事件监听器
       if (VIRTUALIZATION.enabled && this.virtualScroll.container) {
-        this.virtualScroll.container.removeEventListener('scroll', this.handleScroll);
-        window.removeEventListener('resize', this.handleResize);
+        if (this._boundHandleScroll) {
+          this.virtualScroll.container.removeEventListener('scroll', this._boundHandleScroll);
+          this._boundHandleScroll = null;
+        }
+      }
+
+      if (this._boundHandleResize) {
+        window.removeEventListener('resize', this._boundHandleResize);
+        this._boundHandleResize = null;
       }
 
       // 移除自定义事件监听器
