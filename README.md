@@ -133,6 +133,7 @@ host/
 │   │   ├── StateService.js     # 状态管理服务
 │   │   └── StorageService.js   # 存储服务
 │   └── utils/                  # 工具函数
+│       ├── MessageBridge.js    # 消息传递桥接工具
 │       ├── MessageUtils.js     # 消息通知工具
 │       └── ValidationUtils.js  # 验证工具
 │       └── PerformanceUtils.js # 性能优化工具
