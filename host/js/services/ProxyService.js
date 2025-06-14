@@ -3,52 +3,29 @@
  * 处理与代理相关的操作，包括代理设置更新和规则导入
  */
 import { parseHostRule, isValidIp, isValidDomain, normalizeHostRule } from '../utils/ValidationUtils.js';
+import MessageBridge from '../utils/MessageBridge.js';
 
 export default class ProxyService {
   /**
    * 更新代理设置
-   * 向后台脚本发送消息，更新Chrome代理配置和declarativeNetRequest规则
+   * 向后台脚本发送消息，更新Chrome代理配置
    * @returns {Promise<Object>} - 结果对象
    */
-  static updateProxySettings () {
-    return new Promise((resolve, reject) => {
-      try {
-        const timeoutId = setTimeout(() => {
-          reject(new Error('更新代理设置超时'));
-        }, 10000);
-
-        chrome.runtime.sendMessage({ action: 'updateProxySettings' }, (response) => {
-          clearTimeout(timeoutId);
-
-          if (chrome.runtime.lastError) {
-            reject(new Error(`代理更新错误: ${chrome.runtime.lastError.message}`));
-            return;
-          }
-
-          if (!response) {
-            reject(new Error('未收到来自后台脚本的响应'));
-            return;
-          }
-
-          if (!response.success) {
-            reject(new Error(response.error || '代理更新失败'));
-            return;
-          }
-
-          resolve(response);
-        });
-      } catch (error) {
-        reject(new Error(`更新代理设置失败: ${error.message}`));
-      }
-    });
+  static async updateProxySettings() {
+    try {
+      return await MessageBridge.updateProxySettings();
+    } catch (error) {
+      console.error('ProxyService: 更新代理设置失败', error);
+      throw error;
+    }
   }
 
   /**
-   * 验证 SOCKS 代理配置
+   * 验证代理配置
    * @param {object} proxy - 代理配置
    * @returns {object} - 验证结果 {valid: boolean, message: string}
    */
-  static validateProxyConfig (proxy) {
+  static validateProxyConfig(proxy) {
     if (!proxy) {
       return { valid: false, message: '代理配置不能为空' };
     }
@@ -73,7 +50,7 @@ export default class ProxyService {
       return { valid: false, message: '代理端口必须是 1-65535 之间的数字' };
     }
 
-    // 验证认证信息（如果启用）
+    // 验证认证信息
     if (proxy.auth && proxy.auth.enabled) {
       if (!proxy.auth.username || !proxy.auth.username.trim()) {
         return { valid: false, message: '代理用户名不能为空' };
@@ -92,12 +69,9 @@ export default class ProxyService {
    * @param {string} rulesText - 规则文本
    * @param {string} groupId - 分组ID
    * @param {object} [options] - 导入选项
-   * @param {boolean} [options.skipDuplicates=true] - 是否跳过重复规则
-   * @param {boolean} [options.enableRules=true] - 是否默认启用规则
-   * @param {boolean} [options.updateProxyImmediately=true] - 是否立即更新代理
    * @returns {Promise<Object>} - 导入结果
    */
-  static async parseAndImportRules (rulesText, groupId, options = {}) {
+  static async parseAndImportRules(rulesText, groupId, options = {}) {
     // 设置默认选项
     const settings = {
       skipDuplicates: true,
@@ -116,7 +90,6 @@ export default class ProxyService {
       };
     }
 
-    // 结果统计
     const result = {
       success: false,
       imported: 0,
@@ -141,106 +114,88 @@ export default class ProxyService {
       const group = hostsGroups[groupIndex];
       const newHosts = [];
 
-      // 使用分块处理大量规则，避免阻塞UI
-      const processRulesBatch = async (lines, startIndex) => {
-        //批处理大小
-        const batchSize = 50;
-        const endIndex = Math.min(startIndex + batchSize, lines.length);
-
-        for (let i = startIndex; i < endIndex; i++) {
-          const line = lines[i].trim();
-
-          // 跳过空行和注释
-          if (!line || line.startsWith('#')) {
-            result.skipped++;
-            continue;
-          }
-
-          // 解析规则
-          const parsedRule = parseHostRule(line);
-
-          if (!parsedRule) {
-            result.skipped++;
-            result.invalidRules.push({ line, index: i + 1, reason: '格式无效' });
-            continue;
-          }
-
-          const { ip, domain } = parsedRule;
-
-          // 额外验证IP和域名格式
-          if (!isValidIp(ip)) {
-            result.skipped++;
-            result.invalidRules.push({ line, index: i + 1, reason: 'IP地址格式无效' });
-            continue;
-          }
-
-          if (!isValidDomain(domain)) {
-            result.skipped++;
-            result.invalidRules.push({ line, index: i + 1, reason: '域名格式无效' });
-            continue;
-          }
-
-          // 规范化规则
-          const normalized = normalizeHostRule(ip, domain);
-          if (!normalized) {
-            result.skipped++;
-            result.invalidRules.push({ line, index: i + 1, reason: '规则规范化失败' });
-            continue;
-          }
-
-          // 检查是否已存在
-          const exists = group.hosts.some(h => h.ip === normalized.ip && h.domain === normalized.domain);
-
-          if (exists) {
-            if (settings.skipDuplicates) {
-              result.skipped++;
-              result.duplicates.push({ ip: normalized.ip, domain: normalized.domain, index: i + 1 });
-            } else {
-              // 找到重复规则并更新
-              const hostIndex = group.hosts.findIndex(h => h.ip === normalized.ip && h.domain === normalized.domain);
-              if (hostIndex !== -1) {
-                // 仅更新启用状态
-                group.hosts[hostIndex].enabled = settings.enableRules;
-                result.imported++;
-              }
-            }
-          } else {
-            // 创建新规则
-            newHosts.push({
-              id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-              ...normalized,
-              enabled: settings.enableRules
-            });
-            result.imported++;
-          }
-        }
-
-        // 处理下一批，如果还有
-        if (endIndex < lines.length) {
-          // 异步处理下一批，避免阻塞UI
-          await new Promise(resolve => setTimeout(resolve, 10));
-          return processRulesBatch(lines, endIndex);
-        }
-
-        return;
-      };
-
-      // 分割规则行并处理第一批
+      // 分割规则行
       const lines = rulesText.split('\n');
-      await processRulesBatch(lines, 0);
+
+      // 批量处理规则
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+
+        // 跳过空行和注释
+        if (!line || line.startsWith('#')) {
+          result.skipped++;
+          continue;
+        }
+
+        // 解析规则
+        const parsedRule = parseHostRule(line);
+
+        if (!parsedRule) {
+          result.skipped++;
+          result.invalidRules.push({ line, index: i + 1, reason: '格式无效' });
+          continue;
+        }
+
+        const { ip, domain } = parsedRule;
+
+        // 验证IP和域名格式
+        if (!isValidIp(ip)) {
+          result.skipped++;
+          result.invalidRules.push({ line, index: i + 1, reason: 'IP地址格式无效' });
+          continue;
+        }
+
+        if (!isValidDomain(domain)) {
+          result.skipped++;
+          result.invalidRules.push({ line, index: i + 1, reason: '域名格式无效' });
+          continue;
+        }
+
+        // 规范化规则
+        const normalized = normalizeHostRule(ip, domain);
+        if (!normalized) {
+          result.skipped++;
+          result.invalidRules.push({ line, index: i + 1, reason: '规则规范化失败' });
+          continue;
+        }
+
+        // 检查是否已存在
+        const exists = group.hosts.some(h => h.ip === normalized.ip && h.domain === normalized.domain);
+
+        if (exists) {
+          if (settings.skipDuplicates) {
+            result.skipped++;
+            result.duplicates.push({ ip: normalized.ip, domain: normalized.domain, index: i + 1 });
+          } else {
+            // 找到重复规则并更新
+            const hostIndex = group.hosts.findIndex(h => h.ip === normalized.ip && h.domain === normalized.domain);
+            if (hostIndex !== -1) {
+              group.hosts[hostIndex].enabled = settings.enableRules;
+              result.imported++;
+            }
+          }
+        } else {
+          // 创建新规则
+          newHosts.push({
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            ...normalized,
+            enabled: settings.enableRules
+          });
+          result.imported++;
+        }
+      }
 
       // 添加新的hosts条目
       if (newHosts.length > 0) {
         group.hosts.push(...newHosts);
         await this.saveHostsGroups(hostsGroups);
 
-        // 是否立即更新代理设置和declarativeNetRequest规则
+        // 是否立即更新代理设置
         if (settings.updateProxyImmediately) {
           try {
             await this.updateProxySettings();
           } catch (error) {
             console.warn('导入后更新代理设置失败:', error);
-            // 不影响导入结果，但在错误数组中记录
             result.errors.push(`更新代理设置失败: ${error.message}`);
           }
         }
@@ -249,18 +204,13 @@ export default class ProxyService {
       // 设置结果
       result.success = true;
 
-      // 添加详细信息
+      // 构建消息
       if (result.duplicates.length > 0) {
         result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过，包含 ${result.duplicates.length} 条重复规则`;
       } else if (result.invalidRules.length > 0) {
         result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过，包含 ${result.invalidRules.length} 条无效规则`;
       } else {
         result.message = `成功导入 ${result.imported} 条规则，${result.skipped} 条被跳过`;
-      }
-
-      // 如果有错误但导入成功，添加到消息中
-      if (result.errors.length > 0) {
-        result.message += `（存在 ${result.errors.length} 个警告）`;
       }
 
       return result;
@@ -276,15 +226,11 @@ export default class ProxyService {
 
   /**
    * 导出规则
-   * 将指定分组或所有分组的规则导出为文本
    * @param {string} [groupId] - 分组ID，不指定则导出所有分组
    * @param {object} [options] - 导出选项
-   * @param {boolean} [options.includeDisabled=false] - 是否包含已禁用的规则
-   * @param {boolean} [options.includeGroupHeaders=true] - 是否包含分组标题
-   * @param {boolean} [options.includeComments=true] - 是否包含注释
    * @returns {Promise<string>} - 导出的规则文本
    */
-  static async exportRules (groupId, options = {}) {
+  static async exportRules(groupId, options = {}) {
     // 设置默认选项
     const settings = {
       includeDisabled: false,
@@ -365,7 +311,7 @@ export default class ProxyService {
    * @param {string} rulesText - 规则文本
    * @returns {Promise<Object>} - 验证结果
    */
-  static async validateBatchRules (rulesText) {
+  static async validateBatchRules(rulesText) {
     if (!rulesText || typeof rulesText !== 'string') {
       return { valid: 0, invalid: 0, errors: [], warnings: [] };
     }
@@ -434,20 +380,16 @@ export default class ProxyService {
    * @returns {Promise<Array>} - 主机组数组
    * @private
    */
-  static async getHostsGroups () {
+  static async getHostsGroups() {
     return new Promise((resolve, reject) => {
-      try {
-        chrome.storage.local.get(['hostsGroups'], (result) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(`获取主机组失败: ${chrome.runtime.lastError.message}`));
-            return;
-          }
+      chrome.storage.local.get(['hostsGroups'], (result) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(`获取主机组失败: ${chrome.runtime.lastError.message}`));
+          return;
+        }
 
-          resolve(result.hostsGroups || []);
-        });
-      } catch (error) {
-        reject(new Error(`获取主机组失败: ${error.message}`));
-      }
+        resolve(result.hostsGroups || []);
+      });
     });
   }
 
@@ -457,20 +399,16 @@ export default class ProxyService {
    * @returns {Promise<void>}
    * @private
    */
-  static async saveHostsGroups (hostsGroups) {
+  static async saveHostsGroups(hostsGroups) {
     return new Promise((resolve, reject) => {
-      try {
-        chrome.storage.local.set({ hostsGroups }, () => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(`保存主机组失败: ${chrome.runtime.lastError.message}`));
-            return;
-          }
+      chrome.storage.local.set({ hostsGroups }, () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(`保存主机组失败: ${chrome.runtime.lastError.message}`));
+          return;
+        }
 
-          resolve();
-        });
-      } catch (error) {
-        reject(new Error(`保存主机组失败: ${error.message}`));
-      }
+        resolve();
+      });
     });
   }
 }

@@ -2,6 +2,8 @@
  * 状态服务
  * 提供全局状态管理并与 Chrome 存储同步
  */
+import MessageBridge from '../utils/MessageBridge.js';
+
 class StateService {
   constructor() {
     // 初始状态
@@ -25,15 +27,11 @@ class StateService {
     // 订阅者列表
     this.listeners = [];
 
-    // 操作队列，用于防止并发存储操作
-    this.operationQueue = Promise.resolve();
-
     // 状态是否已初始化
     this.initialized = false;
 
     // 节流控制
     this.saveThrottleTimeout = null;
-    // 单位：毫秒
     this.THROTTLE_DELAY = 500;
 
     // 搜索索引 - 用于优化搜索性能
@@ -41,20 +39,13 @@ class StateService {
       domains: new Map(), // domain -> [groupId, hostId][]
       ips: new Map()      // ip -> [groupId, hostId][]
     };
-
-    // 相关状态
-    this.pacProxyState = {
-      updating: false,
-      lastUpdateTime: 0,
-      updateCount: 0
-    };
   }
 
   /**
    * 初始化状态服务
    * @returns {Promise<void>}
    */
-  async initialize () {
+  async initialize() {
     if (this.initialized) return;
 
     try {
@@ -62,16 +53,7 @@ class StateService {
 
       this.state.hostsGroups = data.hostsGroups || [];
       this.state.activeGroups = data.activeGroups || [];
-      this.state.socketProxy = data.socketProxy || {
-        host: '',
-        port: '',
-        enabled: false,
-        auth: {
-          enabled: false,
-          username: '',
-          password: ''
-        }
-      };
+      this.state.socketProxy = data.socketProxy || this.state.socketProxy;
       this.state.showAddGroupForm = data.showAddGroupForm || false;
 
       // 构建搜索索引
@@ -82,11 +64,9 @@ class StateService {
 
       // 监听存储变化
       this.setupStorageListener();
-
-      return Promise.resolve();
     } catch (error) {
       console.error('初始化状态服务失败:', error);
-      return Promise.reject(error);
+      throw error;
     }
   }
 
@@ -95,19 +75,15 @@ class StateService {
    * @param {Array<string>} keys - 要获取的键
    * @returns {Promise<object>}
    */
-  getStorageData (keys) {
+  getStorageData(keys) {
     return new Promise((resolve, reject) => {
-      try {
-        chrome.storage.local.get(keys, result => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve(result);
-          }
-        });
-      } catch (error) {
-        reject(error);
-      }
+      chrome.storage.local.get(keys, result => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve(result);
+        }
+      });
     });
   }
 
@@ -116,57 +92,44 @@ class StateService {
    * @param {object} data - 要存储的数据
    * @returns {Promise<void>}
    */
-  setStorageData (data) {
+  setStorageData(data) {
     return new Promise((resolve, reject) => {
-      try {
-        chrome.storage.local.set(data, () => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve();
-          }
-        });
-      } catch (error) {
-        reject(error);
-      }
+      chrome.storage.local.set(data, () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve();
+        }
+      });
     });
   }
 
   /**
    * 监听存储变化
    */
-  setupStorageListener () {
+  setupStorageListener() {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName !== 'local') return;
 
       let stateChanged = false;
 
-      if (changes.hostsGroups && !this.isEqual(this.state.hostsGroups, changes.hostsGroups.newValue)) {
+      if (changes.hostsGroups) {
         this.state.hostsGroups = changes.hostsGroups.newValue || [];
         this.buildSearchIndices();
         stateChanged = true;
       }
 
-      if (changes.activeGroups && !this.isEqual(this.state.activeGroups, changes.activeGroups.newValue)) {
+      if (changes.activeGroups) {
         this.state.activeGroups = changes.activeGroups.newValue || [];
         stateChanged = true;
       }
 
-      if (changes.socketProxy && !this.isEqual(this.state.socketProxy, changes.socketProxy.newValue)) {
-        this.state.socketProxy = changes.socketProxy.newValue || {
-          host: '',
-          port: '',
-          enabled: false,
-          auth: {
-            enabled: false,
-            username: '',
-            password: ''
-          }
-        };
+      if (changes.socketProxy) {
+        this.state.socketProxy = changes.socketProxy.newValue || this.state.socketProxy;
         stateChanged = true;
       }
 
-      if (changes.showAddGroupForm && this.state.showAddGroupForm !== changes.showAddGroupForm.newValue) {
+      if (changes.showAddGroupForm !== undefined) {
         this.state.showAddGroupForm = changes.showAddGroupForm.newValue || false;
         stateChanged = true;
       }
@@ -178,48 +141,38 @@ class StateService {
   }
 
   /**
-   * 深度比较两个对象是否相等
-   * @param {any} obj1 - 对象1
-   * @param {any} obj2 - 对象2
-   * @returns {boolean}
-   */
-  isEqual (obj1, obj2) {
-    return JSON.stringify(obj1) === JSON.stringify(obj2);
-  }
-
-  /**
    * 将状态保存到存储中
    * @param {boolean} [immediate=false] - 是否立即保存，不使用节流
    * @returns {Promise<void>}
    */
-  saveState (immediate = false) {
+  async saveState(immediate = false) {
     // 清除之前的节流定时器
     if (this.saveThrottleTimeout) {
       clearTimeout(this.saveThrottleTimeout);
       this.saveThrottleTimeout = null;
     }
 
-    const performSave = () => {
-      // 将操作添加到队列
-      this.operationQueue = this.operationQueue
-        .then(() => this.setStorageData({
+    const performSave = async () => {
+      try {
+        // 保存到存储
+        await this.setStorageData({
           hostsGroups: this.state.hostsGroups,
           activeGroups: this.state.activeGroups,
           socketProxy: this.state.socketProxy,
           showAddGroupForm: this.state.showAddGroupForm
-        }))
-        .then(() => this.updateProxySettings())
-        .then(() => {
-          this.notifyListeners();
-        })
-        .catch(error => {
-          console.error('保存状态失败:', error);
-          // 在失败时也通知监听器，以便UI可以做出反应
-          this.notifyListeners();
-          return Promise.reject(error);
         });
 
-      return this.operationQueue;
+        // 更新代理设置
+        await this.updateProxySettings();
+
+        // 通知监听器
+        this.notifyListeners();
+      } catch (error) {
+        console.error('保存状态失败:', error);
+        // 在失败时也通知监听器，以便UI可以做出反应
+        this.notifyListeners();
+        throw error;
+      }
     };
 
     if (immediate) {
@@ -235,82 +188,23 @@ class StateService {
   }
 
   /**
-   * 更新PAC脚本代理设置
+   * 更新代理设置
    * @returns {Promise<void>}
    */
-  updateProxySettings () {
-    return new Promise((resolve, reject) => {
-      try {
-        // 防止过于频繁的更新
-        const now = Date.now();
-        if (this.pacProxyState.updating) {
-          setTimeout(() => {
-            this.updateProxySettings().then(resolve).catch(reject);
-          }, 200);
-          return;
-        }
-
-        this.pacProxyState.updating = true;
-        this.pacProxyState.lastUpdateTime = now;
-        this.pacProxyState.updateCount++;
-
-        // 计算当前活跃的hosts映射数量，用于状态监控
-        const activeHostsCount = Object.keys(this.state.hostsGroups.reduce((acc, group) => {
-          if (this.state.activeGroups.includes(group.id)) {
-            group.hosts.forEach(host => {
-              if (host.enabled) {
-                acc[host.domain] = host.ip;
-              }
-            });
-          }
-          return acc;
-        }, {})).length;
-
-        // 超时处理
-        const timeoutId = setTimeout(() => {
-          this.pacProxyState.updating = false;
-          reject(new Error(`代理设置更新超时，当前配置：${activeHostsCount}条hosts规则`));
-        }, 20000);
-
-        // 发送消息给背景脚本更新代理设置
-        chrome.runtime.sendMessage({ action: 'updateProxySettings' }, response => {
-          clearTimeout(timeoutId);
-          this.pacProxyState.updating = false;
-
-          if (chrome.runtime.lastError) {
-            reject(new Error(`代理更新失败: ${chrome.runtime.lastError.message}`));
-          } else if (response && !response.success) {
-            reject(new Error(response.error || '代理设置更新失败'));
-          } else {
-            // 触发成功更新事件
-            try {
-              const updateEvent = new CustomEvent('proxySettingsUpdated', {
-                detail: {
-                  success: true,
-                  hostsCount: activeHostsCount,
-                  socksEnabled: this.state.socketProxy.enabled,
-                  timestamp: now
-                }
-              });
-              document.dispatchEvent(updateEvent);
-            } catch (eventError) {
-              console.warn('触发代理更新事件失败:', eventError);
-            }
-            resolve();
-          }
-        });
-      } catch (error) {
-        this.pacProxyState.updating = false;
-        reject(new Error(`代理设置更新异常：${error.message}`));
-      }
-    });
+  async updateProxySettings() {
+    try {
+      await MessageBridge.updateProxySettings();
+    } catch (error) {
+      console.error('更新代理设置失败:', error);
+      throw error;
+    }
   }
 
   /**
    * 获取当前状态
    * @returns {object} 当前状态对象
    */
-  getState () {
+  getState() {
     return this.state;
   }
 
@@ -319,7 +213,7 @@ class StateService {
    * @param {Function} listener - 监听函数，会在状态变化时调用
    * @returns {Function} 取消订阅的函数
    */
-  subscribe (listener) {
+  subscribe(listener) {
     if (typeof listener !== 'function') {
       console.warn('订阅时提供的listener不是函数');
       return () => { };
@@ -336,7 +230,7 @@ class StateService {
   /**
    * 通知所有监听器状态已更新
    */
-  notifyListeners () {
+  notifyListeners() {
     this.listeners.forEach(listener => {
       try {
         listener(this.state);
@@ -350,13 +244,15 @@ class StateService {
    * 构建搜索索引
    * 优化搜索性能
    */
-  buildSearchIndices () {
+  buildSearchIndices() {
     // 清空旧索引
     this.searchIndex.domains.clear();
     this.searchIndex.ips.clear();
 
     // 构建新索引
     this.state.hostsGroups.forEach(group => {
+      if (!group.hosts) return;
+      
       group.hosts.forEach(host => {
         // 索引域名
         if (!this.searchIndex.domains.has(host.domain)) {
@@ -379,7 +275,7 @@ class StateService {
    * @param {boolean} [active=true] - 是否激活
    * @returns {Promise<boolean>} 是否添加成功
    */
-  async addGroup (group, active = true) {
+  async addGroup(group, active = true) {
     // 检查是否已存在同名分组
     const isNameExist = this.state.hostsGroups.some(g => g.name === group.name);
     if (isNameExist) return false;
@@ -396,6 +292,7 @@ class StateService {
       await this.saveState(true);
       return true;
     } catch (error) {
+      // 回滚
       this.state.hostsGroups.pop();
       if (active) {
         this.state.activeGroups = this.state.activeGroups.filter(id => id !== group.id);
@@ -411,7 +308,7 @@ class StateService {
    * @param {object} updates - 更新对象
    * @returns {Promise<boolean>} 是否更新成功
    */
-  async updateGroup (groupId, updates) {
+  async updateGroup(groupId, updates) {
     const index = this.state.hostsGroups.findIndex(g => g.id === groupId);
     if (index === -1) return false;
 
@@ -442,7 +339,7 @@ class StateService {
    * @param {string} groupId - 分组ID
    * @returns {Promise<boolean>} 是否删除成功
    */
-  async deleteGroup (groupId) {
+  async deleteGroup(groupId) {
     // 备份原始状态
     const originalGroups = [...this.state.hostsGroups];
     const originalActiveGroups = [...this.state.activeGroups];
@@ -452,7 +349,6 @@ class StateService {
     this.state.activeGroups = this.state.activeGroups.filter(id => id !== groupId);
 
     try {
-      // 立即保存，不使用节流，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -469,7 +365,7 @@ class StateService {
    * @param {boolean} enabled - 是否启用
    * @returns {Promise<boolean>} 是否切换成功
    */
-  async toggleGroup (groupId, enabled) {
+  async toggleGroup(groupId, enabled) {
     // 备份原始状态
     const originalActiveGroups = [...this.state.activeGroups];
 
@@ -483,7 +379,6 @@ class StateService {
     }
 
     try {
-      // 立即保存，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -499,7 +394,7 @@ class StateService {
    * @param {object} host - 主机对象
    * @returns {Promise<boolean>} 是否添加成功
    */
-  async addHost (groupId, host) {
+  async addHost(groupId, host) {
     const groupIndex = this.state.hostsGroups.findIndex(g => g.id === groupId);
     if (groupIndex === -1) return false;
 
@@ -516,7 +411,6 @@ class StateService {
     group.hosts.push(host);
 
     try {
-      // 立即保存，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -533,7 +427,7 @@ class StateService {
    * @param {object} updates - 更新对象
    * @returns {Promise<object|null>} 更新后的主机对象或null表示失败
    */
-  async updateHost (groupId, hostId, updates) {
+  async updateHost(groupId, hostId, updates) {
     const groupIndex = this.state.hostsGroups.findIndex(g => g.id === groupId);
     if (groupIndex === -1) return null;
 
@@ -565,7 +459,6 @@ class StateService {
     const updatedHost = this.state.hostsGroups[groupIndex].hosts[hostIndex];
 
     try {
-      // 根据更新类型决定是否立即保存
       const needsImmediateUpdate = updates.ip || updates.domain || updates.enabled !== undefined;
       await this.saveState(needsImmediateUpdate);
       return updatedHost;
@@ -583,7 +476,7 @@ class StateService {
    * @param {boolean} enabled - 是否启用
    * @returns {Promise<boolean>} 是否切换成功
    */
-  async toggleHost (groupId, hostId, enabled) {
+  async toggleHost(groupId, hostId, enabled) {
     const result = await this.updateHost(groupId, hostId, { enabled });
     return result !== null;
   }
@@ -594,19 +487,17 @@ class StateService {
    * @param {string} hostId - 主机ID
    * @returns {Promise<boolean>} 是否删除成功
    */
-  async deleteHost (groupId, hostId) {
+  async deleteHost(groupId, hostId) {
     const groupIndex = this.state.hostsGroups.findIndex(g => g.id === groupId);
     if (groupIndex === -1) return false;
 
     const group = this.state.hostsGroups[groupIndex];
-    // 备份原始主机列表
     const originalHosts = [...group.hosts];
 
     // 过滤掉要删除的主机
     this.state.hostsGroups[groupIndex].hosts = group.hosts.filter(h => h.id !== hostId);
 
     try {
-      // 立即保存，因为需要立即更新规则
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -621,7 +512,7 @@ class StateService {
    * @param {object} proxy - 代理配置
    * @returns {Promise<boolean>} 是否更新成功
    */
-  async updateSocketProxy (proxy) {
+  async updateSocketProxy(proxy) {
     // 备份原始代理配置
     const originalProxy = { ...this.state.socketProxy };
 
@@ -637,7 +528,6 @@ class StateService {
     };
 
     try {
-      // 立即保存，因为代理设置更改需要立即生效
       await this.saveState(true);
       return true;
     } catch (error) {
@@ -648,129 +538,20 @@ class StateService {
   }
 
   /**
-   * 更新Socket代理认证信息
-   * @param {object} auth - 认证信息
-   * @returns {Promise<boolean>} 是否更新成功
+   * 设置是否显示添加分组表单
+   * @param {boolean} show - 是否显示
+   * @returns {Promise<void>}
    */
-  async updateSocketProxyAuth (auth) {
-    // 备份原始代理认证配置
-    const originalAuth = this.state.socketProxy.auth
-      ? { ...this.state.socketProxy.auth }
-      : { enabled: false, username: '', password: '' };
-
-    // 确保auth对象存在
-    if (!this.state.socketProxy.auth) {
-      this.state.socketProxy.auth = {
-        enabled: false,
-        username: '',
-        password: ''
-      };
-    }
-
-    // 应用更新
-    this.state.socketProxy.auth = {
-      ...this.state.socketProxy.auth,
-      ...auth
-    };
+  async setShowAddGroupForm(show) {
+    this.state.showAddGroupForm = show;
 
     try {
-      await this.saveState(true);
-      return true;
+      await this.setStorageData({ showAddGroupForm: show });
+      this.notifyListeners();
     } catch (error) {
-      this.state.socketProxy.auth = originalAuth;
-      console.error('更新代理认证设置失败:', error);
-      return false;
+      console.error('设置表单显示状态失败:', error);
+      throw error;
     }
-  }
-
-  /**
-   * 批量导入主机规则
-   * @param {string} groupId - 分组ID
-   * @param {string} rulesText - 规则文本
-   * @returns {Promise<object>} 导入结果
-   */
-  async batchImportHosts (groupId, rulesText) {
-    const groupIndex = this.state.hostsGroups.findIndex(g => g.id === groupId);
-    if (groupIndex === -1) {
-      return {
-        success: false,
-        message: '未找到指定的分组',
-        imported: 0,
-        skipped: 0
-      };
-    }
-
-    const group = this.state.hostsGroups[groupIndex];
-    const originalHosts = [...group.hosts];
-
-    const lines = rulesText.split('\n');
-    let imported = 0;
-    let skipped = 0;
-    let newHostIds = [];
-
-    // 解析规则
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-
-      // 跳过空行和注释
-      if (!trimmedLine || trimmedLine.startsWith('#')) {
-        skipped++;
-        continue;
-      }
-
-      // 解析规则
-      const parts = trimmedLine.split(/\s+/);
-      if (parts.length >= 2) {
-        const ip = parts[0];
-        const domain = parts[1];
-
-        // 简单验证IP格式
-        const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-        if (ipRegex.test(ip)) {
-          // 检查是否已存在
-          const exists = group.hosts.some(h => h.ip === ip && h.domain === domain);
-          if (!exists) {
-            const newHostId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
-            newHostIds.push(newHostId);
-
-            group.hosts.push({
-              id: newHostId,
-              ip,
-              domain,
-              enabled: true
-            });
-            imported++;
-          } else {
-            skipped++;
-          }
-        } else {
-          skipped++;
-        }
-      } else {
-        skipped++;
-      }
-    }
-
-    // 如果有导入的规则，保存状态
-    if (imported > 0) {
-      try {
-        // 立即保存，因为需要立即更新规则
-        await this.saveState(true);
-        return { success: true, imported, skipped };
-      } catch (error) {
-
-        this.state.hostsGroups[groupIndex].hosts = originalHosts;
-        console.error('批量导入失败:', error);
-        return {
-          success: false,
-          message: '保存规则时出错: ' + error.message,
-          imported: 0,
-          skipped: lines.length
-        };
-      }
-    }
-
-    return { success: true, imported, skipped };
   }
 
   /**
@@ -778,7 +559,7 @@ class StateService {
    * @param {string} keyword - 搜索关键字
    * @returns {object} 搜索结果
    */
-  search (keyword) {
+  search(keyword) {
     if (!keyword) {
       return { matchedGroups: [], totalMatches: 0 };
     }
@@ -788,7 +569,7 @@ class StateService {
       const matchedGroups = [];
       let totalMatches = 0;
 
-      // 使用索引加速搜索，groupId -> matchedHosts[]
+      // 使用索引加速搜索
       const matchedGroupMap = new Map();
 
       // 按域名搜索
@@ -814,21 +595,17 @@ class StateService {
         const group = this.state.hostsGroups.find(g => g.id === groupId);
         if (!group) continue;
 
-        // 过滤掉可能的null值，并做数据验证
         const matchedHosts = hostMatches
           .map(match => {
             const host = group.hosts.find(h => h.id === match.hostId);
-            if (!host) return null;
-
-            // 验证主机数据的完整性
-            if (!host.ip || !host.domain) return null;
+            if (!host || !host.ip || !host.domain) return null;
 
             return {
               ...host,
               _matches: match.matches
             };
           })
-          .filter(Boolean); // 移除null值
+          .filter(Boolean);
 
         if (matchedHosts.length > 0) {
           matchedGroups.push({
@@ -844,7 +621,6 @@ class StateService {
       return { matchedGroups, totalMatches };
     } catch (error) {
       console.error('搜索处理失败:', error);
-      // 发生错误时返回空结果
       return { matchedGroups: [], totalMatches: 0, error };
     }
   }
@@ -853,7 +629,7 @@ class StateService {
    * 辅助方法：添加到匹配结果中
    * @private
    */
-  addToMatchedResults (matchedGroupMap, groupId, hostId, matchType) {
+  addToMatchedResults(matchedGroupMap, groupId, hostId, matchType) {
     if (!matchedGroupMap.has(groupId)) {
       matchedGroupMap.set(groupId, []);
     }
@@ -862,10 +638,8 @@ class StateService {
     const existingMatch = matchedGroupMap.get(groupId).find(m => m.hostId === hostId);
 
     if (existingMatch) {
-      // 更新匹配类型
       existingMatch.matches[matchType] = true;
     } else {
-      // 添加新匹配
       matchedGroupMap.get(groupId).push({
         hostId,
         matches: { [matchType]: true }
@@ -874,153 +648,24 @@ class StateService {
   }
 
   /**
-   * 设置是否显示添加分组表单
-   * @param {boolean} show - 是否显示
-   * @returns {Promise<void>}
-   */
-  async setShowAddGroupForm (show) {
-    this.state.showAddGroupForm = show;
-
-    try {
-      // 只保存showAddGroupForm，不保存整个状态
-      await this.setStorageData({ showAddGroupForm: show });
-      this.notifyListeners();
-      return Promise.resolve();
-    } catch (error) {
-      console.error('设置表单显示状态失败:', error);
-      return Promise.reject(error);
-    }
-  }
-
-  /**
    * 强制刷新状态
-   * 用于确保视图与实际状态同步
-   * @param {boolean} [notifyListeners=true] - 是否通知监听器
    * @returns {Promise<void>}
    */
-  async forceRefresh (notifyListeners = true) {
+  async forceRefresh() {
     try {
-      // 重新从存储获取最新状态
       const data = await this.getStorageData(['hostsGroups', 'activeGroups', 'socketProxy', 'showAddGroupForm']);
 
-      // 更新内部状态
       this.state.hostsGroups = data.hostsGroups || [];
       this.state.activeGroups = data.activeGroups || [];
-      this.state.socketProxy = data.socketProxy || {
-        host: '',
-        port: '',
-        enabled: false,
-        auth: {
-          enabled: false,
-          username: '',
-          password: ''
-        }
-      };
+      this.state.socketProxy = data.socketProxy || this.state.socketProxy;
       this.state.showAddGroupForm = data.showAddGroupForm || false;
 
-      // 重建搜索索引
       this.buildSearchIndices();
-
-      // 通知监听器
-      if (notifyListeners) {
-        this.notifyListeners();
-      }
-
-      return Promise.resolve();
+      this.notifyListeners();
     } catch (error) {
       console.error('强制刷新状态失败:', error);
-      return Promise.reject(error);
+      throw error;
     }
-  }
-
-  /**
-   * 检查主机是否存在于任何分组中
-   * @param {string} hostId - 主机ID
-   * @returns {boolean} - 是否存在
-   */
-  hasHost (hostId) {
-    if (!hostId) return false;
-
-    try {
-      return this.state.hostsGroups.some(group =>
-        group.hosts && group.hosts.some(host => host.id === hostId)
-      );
-    } catch (error) {
-      console.error('检查主机是否存在失败:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 获取主机所在的分组
-   * @param {string} hostId - 主机ID
-   * @returns {object|null} - {groupId, hostIndex, group, host} 或 null
-   */
-  findHostLocation (hostId) {
-    if (!hostId) return null;
-
-    try {
-      for (const group of this.state.hostsGroups) {
-        if (!group.hosts) continue;
-
-        const hostIndex = group.hosts.findIndex(h => h.id === hostId);
-        if (hostIndex !== -1) {
-          return {
-            groupId: group.id,
-            hostIndex,
-            group,
-            host: group.hosts[hostIndex]
-          };
-        }
-      }
-    } catch (error) {
-      console.error('查找主机位置失败:', error);
-    }
-
-    return null;
-  }
-
-  /**
-   * 同步所有更新到存储
-   * 当可能有多个视图需要同步时使用
-   * @returns {Promise<boolean>} - 是否成功
-   */
-  async syncAll () {
-    try {
-      // 立即保存所有状态，不使用节流
-      await this.saveState(true);
-
-      // 触发代理更新
-      await this.updateProxySettings();
-
-      // 通知所有监听器
-      this.notifyListeners();
-
-      return true;
-    } catch (error) {
-      console.error('同步所有更新失败:', error);
-      return false;
-    }
-  }
-
-  /**
-   * 获取PAC脚本代理状态
-   * @returns {object} PAC脚本代理状态信息
-   */
-  getPacProxyState () {
-    return {
-      ...this.pacProxyState,
-      hostsCount: Object.keys(this.state.hostsGroups.reduce((acc, group) => {
-        if (this.state.activeGroups.includes(group.id)) {
-          group.hosts.forEach(host => {
-            if (host.enabled) {
-              acc[host.domain] = host.ip;
-            }
-          });
-        }
-        return acc;
-      }, {})).length
-    };
   }
 }
 

@@ -39,16 +39,55 @@ const state = {
   lastConfigHash: null
 };
 
+// Service Worker Revitalization Mechanism
+let keepAliveInterval = null;
+
+// startKeepAlive function to keep Service Worker alive
+function startKeepAlive() {
+  keepAliveInterval = setInterval(() => {
+    chrome.storage.local.get(null, () => {
+      // Simple storage access to keep Service Worker alive
+    });
+  }, 20000);
+}
+
+// Stop keep-alive
+function stopKeepAlive() {
+  if (keepAliveInterval) {
+    clearInterval(keepAliveInterval);
+    keepAliveInterval = null;
+  }
+}
+
+// Service Worker Revitalization Mechanism
+self.addEventListener('activate', event => {
+  event.waitUntil(initializeExtension());
+});
+
+// Listen for extension installation/updates
+chrome.runtime.onInstalled.addListener(details => {
+  initializeExtension();
+});
+
+// Listen for startup events
+chrome.runtime.onStartup.addListener(() => {
+  initializeExtension();
+});
+
 // Initialize extension
-function initializeExtension () {
-  loadInitialState()
-    .then(setupStorageListener)
-    .then(setupMessageListener)
-    .catch(handleInitializationError);
+async function initializeExtension() {
+  try {
+    startKeepAlive();
+    await loadInitialState();
+    setupStorageListener();
+    setupMessageListener();
+  } catch (error) {
+    console.error('Failed to initialize extension:', error);
+  }
 }
 
 // Load initial state from storage
-async function loadInitialState () {
+async function loadInitialState() {
   try {
     const data = await getStorageData(['hostsGroups', 'activeGroups', 'socketProxy']);
 
@@ -72,7 +111,7 @@ async function loadInitialState () {
 }
 
 // Create default groups if none exist
-async function createDefaultGroups () {
+async function createDefaultGroups() {
   const defaultGroups = [{
     id: 'default',
     name: 'Default Group',
@@ -88,7 +127,7 @@ async function createDefaultGroups () {
 }
 
 // Activate all groups
-async function activateAllGroups (hostsGroups) {
+async function activateAllGroups(hostsGroups) {
   const allGroupIds = hostsGroups.map(group => group.id);
 
   try {
@@ -101,7 +140,7 @@ async function activateAllGroups (hostsGroups) {
 }
 
 // Setup storage change listener
-function setupStorageListener () {
+function setupStorageListener() {
   chrome.storage.onChanged.addListener((changes) => {
     if (shouldUpdateHostsMap(changes)) {
       throttledUpdateHostsMap();
@@ -109,18 +148,28 @@ function setupStorageListener () {
   });
 }
 
-// Setup message listener
-function setupMessageListener () {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'updateProxySettings') {
-      handleUpdateProxyMessage(sendResponse);
-      return true;
-    }
-  });
+// Setup message listener with error handling
+function setupMessageListener() {
+  chrome.runtime.onMessage.removeListener(handleMessage);
+
+  chrome.runtime.onMessage.addListener(handleMessage);
+}
+
+// Unified message handling function
+function handleMessage(message, sender, sendResponse) {
+  // Immediately return true to indicate asynchronous response
+  if (message.action === 'updateProxySettings') {
+    handleUpdateProxyMessage(message, sender, sendResponse);
+    return true;
+  }
+
+  // For unknown messages, respond immediately
+  sendResponse({ success: false, error: 'Unknown action' });
+  return false;
 }
 
 // Handle update proxy message
-async function handleUpdateProxyMessage (sendResponse) {
+async function handleUpdateProxyMessage(message, sender, sendResponse) {
   try {
     await updateActiveHostsMap();
     sendResponse({ success: true });
@@ -134,12 +183,12 @@ async function handleUpdateProxyMessage (sendResponse) {
 }
 
 // Check if storage changes require hosts map update
-function shouldUpdateHostsMap (changes) {
+function shouldUpdateHostsMap(changes) {
   return changes.hostsGroups || changes.activeGroups || changes.socketProxy;
 }
 
 // Throttled update hosts map
-function throttledUpdateHostsMap () {
+function throttledUpdateHostsMap() {
   if (state.updateThrottleTimer) {
     clearTimeout(state.updateThrottleTimer);
   }
@@ -152,7 +201,7 @@ function throttledUpdateHostsMap () {
 }
 
 // Update active hosts map
-async function updateActiveHostsMap () {
+async function updateActiveHostsMap() {
   if (state.proxyState.updating) {
     return enqueueUpdate();
   }
@@ -178,7 +227,7 @@ async function updateActiveHostsMap () {
 }
 
 // Build active hosts map from storage data
-function buildActiveHostsMap (data) {
+function buildActiveHostsMap(data) {
   const hostsMap = {};
   const { hostsGroups = [], activeGroups = [] } = data;
 
@@ -196,14 +245,14 @@ function buildActiveHostsMap (data) {
 }
 
 // Enqueue update request
-function enqueueUpdate () {
+function enqueueUpdate() {
   return new Promise((resolve, reject) => {
     state.proxyState.updateQueue.push({ resolve, reject });
   });
 }
 
 // Process update queue
-function processUpdateQueue (success, error) {
+function processUpdateQueue(success, error) {
   while (state.proxyState.updateQueue.length > 0) {
     const { resolve, reject } = state.proxyState.updateQueue.shift();
     success ? resolve() : reject(error);
@@ -211,7 +260,7 @@ function processUpdateQueue (success, error) {
 }
 
 // Update Chrome proxy settings
-async function updateProxySettings () {
+async function updateProxySettings() {
   if (!shouldContinueUpdate()) {
     return;
   }
@@ -255,7 +304,7 @@ async function updateProxySettings () {
 }
 
 // Force clear proxy settings with retry
-async function forceClearProxySettings () {
+async function forceClearProxySettings() {
   try {
     // First attempt: clear proxy settings
     await clearProxySettings();
@@ -276,7 +325,7 @@ async function forceClearProxySettings () {
 }
 
 // Generate configuration hash for change detection
-function generateConfigHash (config) {
+function generateConfigHash(config) {
   if (!config) return 'empty';
 
   // Create a simplified version for hashing
@@ -290,7 +339,7 @@ function generateConfigHash (config) {
 }
 
 // Check if update should continue based on error count
-function shouldContinueUpdate () {
+function shouldContinueUpdate() {
   const now = Date.now();
 
   if (state.proxyState.errorCount >= CONSTANTS.MAX_ERROR_COUNT) {
@@ -305,13 +354,13 @@ function shouldContinueUpdate () {
 }
 
 // Get socket proxy configuration
-async function getSocketProxyConfig () {
+async function getSocketProxyConfig() {
   const result = await getStorageData(['socketProxy']);
   return result.socketProxy || CONSTANTS.DEFAULT_PROXY_CONFIG;
 }
 
 // Generate proxy configuration
-function generateProxyConfig (hostsMapping, socketProxy) {
+function generateProxyConfig(hostsMapping, socketProxy) {
   return {
     mode: "pac_script",
     pacScript: {
@@ -322,7 +371,7 @@ function generateProxyConfig (hostsMapping, socketProxy) {
 }
 
 // Clear proxy settings
-async function clearProxySettings () {
+async function clearProxySettings() {
   return new Promise((resolve, reject) => {
     chrome.proxy.settings.clear({ scope: 'regular' }, () => {
       if (chrome.runtime.lastError) {
@@ -337,7 +386,7 @@ async function clearProxySettings () {
 }
 
 // Apply proxy configuration
-async function applyProxyConfig (config) {
+async function applyProxyConfig(config) {
   return new Promise((resolve, reject) => {
     chrome.proxy.settings.set({ value: config, scope: 'regular' }, () => {
       if (chrome.runtime.lastError) {
@@ -350,7 +399,7 @@ async function applyProxyConfig (config) {
 }
 
 // Generate PAC script with cache busting
-function generatePacScript (hostsMapping, socketProxy) {
+function generatePacScript(hostsMapping, socketProxy) {
   const pacComponents = {
     hostsMap: JSON.stringify(hostsMapping || {}),
     socksEnabled: socketProxy && socketProxy.enabled,
@@ -362,7 +411,7 @@ function generatePacScript (hostsMapping, socketProxy) {
 }
 
 // Build proxy string based on configuration
-function buildProxyString (socketProxy) {
+function buildProxyString(socketProxy) {
   if (!socketProxy || !socketProxy.enabled || !socketProxy.host || !socketProxy.port) {
     return '';
   }
@@ -390,7 +439,7 @@ function buildProxyString (socketProxy) {
 }
 
 // Build authentication string
-function buildAuthString (auth) {
+function buildAuthString(auth) {
   if (!auth || !auth.enabled || !auth.username || !auth.password) {
     return '';
   }
@@ -398,7 +447,7 @@ function buildAuthString (auth) {
 }
 
 // Build PAC script content with dynamic generation
-function buildPacScriptContent ({ hostsMap, socksEnabled, proxyString, timestamp }) {
+function buildPacScriptContent({ hostsMap, socksEnabled, proxyString, timestamp }) {
   // Add timestamp comment to ensure script is unique
   return `
   // Generated at: ${timestamp}
@@ -448,7 +497,7 @@ function buildPacScriptContent ({ hostsMap, socksEnabled, proxyString, timestamp
 }
 
 // Handle proxy update errors
-function handleProxyError (error) {
+function handleProxyError(error) {
   state.proxyState.errorCount++;
 
   if (state.proxyState.errorCount >= CONSTANTS.MAX_ERROR_COUNT) {
@@ -457,13 +506,8 @@ function handleProxyError (error) {
   }
 }
 
-// Handle initialization error
-function handleInitializationError (error) {
-  console.error('Extension initialization failed:', error);
-}
-
 // Utility functions
-function isSocketProxyConfigured (socketProxy) {
+function isSocketProxyConfigured(socketProxy) {
   return socketProxy &&
     socketProxy.enabled &&
     socketProxy.host &&
@@ -471,7 +515,7 @@ function isSocketProxyConfigured (socketProxy) {
 }
 
 // Storage helpers with promise wrappers
-function getStorageData (keys) {
+function getStorageData(keys) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(keys, (result) => {
       if (chrome.runtime.lastError) {
@@ -483,7 +527,7 @@ function getStorageData (keys) {
   });
 }
 
-function setStorageData (data) {
+function setStorageData(data) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.set(data, () => {
       if (chrome.runtime.lastError) {
@@ -495,8 +539,5 @@ function setStorageData (data) {
   });
 }
 
-// Initialize on extension installation/update
-chrome.runtime.onInstalled.addListener(initializeExtension);
-
-// Initialize on browser startup
+// Start the extension initialization process
 initializeExtension();

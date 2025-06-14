@@ -1,3 +1,15 @@
+/**
+ * Popup 页面脚本
+ * 使用 MessageBridge 处理与 Service Worker 的通信
+ */
+
+// 导入消息桥接工具
+import('../js/utils/MessageBridge.js').then(module => {
+  window.MessageBridge = module.default;
+}).catch(error => {
+  console.error('Failed to load MessageBridge:', error);
+});
+
 document.addEventListener('DOMContentLoaded', async () => {
   // 打开设置页面
   document.getElementById('open-settings').addEventListener('click', () => {
@@ -17,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     // 如果是 hostsGroups 变化，可能是单个规则的状态变化
     else if (changes.hostsGroups && !changes.activeGroups) {
-      // 不重新加载整个列表
+      // 不重新加载整个列表，保持展开状态
     }
     if (changes.socketProxy) {
       loadProxyStatus();
@@ -36,7 +48,7 @@ const operationState = {
 };
 
 // 加载分组列表
-async function loadGroups () {
+async function loadGroups() {
   try {
     const result = await chrome.storage.local.get(['hostsGroups', 'activeGroups']);
     const hostsGroups = result.hostsGroups || [];
@@ -175,14 +187,13 @@ async function loadGroups () {
       groupsList.appendChild(groupSection);
     });
   } catch (error) {
-    console.error('加载分组失败:', error);
     const groupsList = document.getElementById('groups-list');
     groupsList.innerHTML = '<div class="empty-state">加载失败，请重试</div>';
   }
 }
 
 // 加载代理状态
-async function loadProxyStatus () {
+async function loadProxyStatus() {
   try {
     const result = await chrome.storage.local.get(['socketProxy']);
     const socketProxy = result.socketProxy || {};
@@ -213,9 +224,13 @@ async function loadProxyStatus () {
       proxyItem.style.cursor = 'default';
       proxyItem.onclick = null;
 
+      // 清除旧的事件监听器
+      const newSwitch = proxySwitch.cloneNode(true);
+      proxySwitch.parentNode.replaceChild(newSwitch, proxySwitch);
+
       // 代理开关事件
-      proxySwitch.addEventListener('change', async () => {
-        await updateSocketProxyStatus(socketProxy, proxySwitch.checked);
+      newSwitch.addEventListener('change', async () => {
+        await updateSocketProxyStatus(socketProxy, newSwitch.checked);
       });
     }
 
@@ -226,18 +241,16 @@ async function loadProxyStatus () {
       }
     });
   } catch (error) {
-    console.error('加载代理状态失败:', error);
     const proxyStatus = document.getElementById('proxy-status');
     proxyStatus.textContent = '加载失败';
   }
 }
 
 // 更新Socket代理状态
-async function updateSocketProxyStatus (socketProxy, enabled) {
+async function updateSocketProxyStatus(socketProxy, enabled) {
   try {
     // 防止重复操作
     if (operationState.updating) {
-      console.log('操作正在进行中，跳过此次请求');
       return;
     }
 
@@ -258,8 +271,8 @@ async function updateSocketProxyStatus (socketProxy, enabled) {
       }
     });
 
-    // 发送消息给后台脚本更新代理设置
-    await updateProxySettingsWithTimeout();
+    // 使用 MessageBridge 发送消息给后台脚本更新代理设置
+    await window.MessageBridge.updateProxySettings();
 
     // 恢复状态显示
     const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
@@ -267,7 +280,6 @@ async function updateSocketProxyStatus (socketProxy, enabled) {
     proxySwitch.disabled = false;
 
   } catch (error) {
-    console.error('更新代理状态失败:', error);
 
     // 恢复开关状态
     const proxySwitch = document.getElementById('proxy-switch');
@@ -286,17 +298,16 @@ async function updateSocketProxyStatus (socketProxy, enabled) {
 }
 
 // 切换分组状态
-async function toggleGroup (groupId, enabled) {
+async function toggleGroup(groupId, enabled) {
   try {
     // 防止重复操作
     if (operationState.updating) {
-      console.log('操作正在进行中，跳过此次请求');
       return;
     }
 
     operationState.updating = true;
 
-    // 显示更新中状态（找到对应的开关并禁用）
+    // 显示更新中状态
     const groupSection = document.querySelector(`[data-group-id="${groupId}"]`);
     if (groupSection) {
       const toggle = groupSection.querySelector('input[type="checkbox"]');
@@ -318,8 +329,8 @@ async function toggleGroup (groupId, enabled) {
 
     await chrome.storage.local.set({ activeGroups });
 
-    // 发送消息给后台脚本更新代理设置和declarativeNetRequest规则
-    await updateProxySettingsWithTimeout();
+    // 使用 MessageBridge 发送消息给后台脚本更新代理设置
+    await window.MessageBridge.updateProxySettings();
 
     // 恢复开关状态
     if (groupSection) {
@@ -347,11 +358,10 @@ async function toggleGroup (groupId, enabled) {
 }
 
 // 切换单个Host状态
-async function toggleHost (groupId, hostId, enabled) {
+async function toggleHost(groupId, hostId, enabled) {
   try {
     // 防止重复操作
     if (operationState.updating) {
-      console.log('操作正在进行中，跳过此次请求');
       return;
     }
 
@@ -375,8 +385,8 @@ async function toggleHost (groupId, hostId, enabled) {
 
         await chrome.storage.local.set({ hostsGroups });
 
-        // 发送消息给后台脚本更新代理设置和declarativeNetRequest规则
-        await updateProxySettingsWithTimeout();
+        // 使用 MessageBridge 发送消息给后台脚本更新代理设置
+        await window.MessageBridge.updateProxySettings();
 
         // 恢复开关状态
         if (ruleToggleInput) {
@@ -396,34 +406,4 @@ async function toggleHost (groupId, hostId, enabled) {
   } finally {
     operationState.updating = false;
   }
-}
-
-// 带超时的代理设置更新
-async function updateProxySettingsWithTimeout () {
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      reject(new Error('更新代理设置超时'));
-    }, 15000);
-
-    chrome.runtime.sendMessage({ action: 'updateProxySettings' }, (response) => {
-      clearTimeout(timeoutId);
-
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-
-      if (!response) {
-        reject(new Error('未收到后台脚本响应'));
-        return;
-      }
-
-      if (!response.success) {
-        reject(new Error(response.error || '更新失败'));
-        return;
-      }
-
-      resolve(response);
-    });
-  });
 }
