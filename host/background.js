@@ -593,6 +593,17 @@ function buildPacScriptContent({ hostsJson, socksEnabled, proxyString, bypassExa
           return true;
         }
       }
+
+      // Allow bare domains (e.g. example.com) to bypass all of their subdomains
+      var dotPos = target.indexOf('.');
+      while (dotPos !== -1) {
+        var parent = target.slice(dotPos + 1);
+        if (bypassExact[parent]) {
+          return true;
+        }
+        dotPos = target.indexOf('.', dotPos + 1);
+      }
+
       return false;
     }
 
