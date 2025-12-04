@@ -205,6 +205,7 @@ async function loadProxyStatus() {
     // 如果代理未配置，显示提示
     if (!socketProxy.host || !socketProxy.port) {
       proxyStatus.textContent = '未配置';
+      proxyStatus.title = '未配置';
       proxySwitch.checked = false;
       proxySwitch.disabled = true;
 
@@ -217,6 +218,7 @@ async function loadProxyStatus() {
       // 显示代理状态，包含认证信息
       const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
       proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
+      proxyStatus.title = proxyStatus.textContent;
       proxySwitch.checked = !!socketProxy.enabled;
       proxySwitch.disabled = false;
 
@@ -263,6 +265,7 @@ async function updateSocketProxyStatus(socketProxy, enabled) {
 
     proxySwitch.disabled = true;
     proxyStatus.textContent = '更新中...';
+    proxyStatus.title = '更新中...';
 
     await chrome.storage.local.set({
       socketProxy: {
@@ -277,6 +280,7 @@ async function updateSocketProxyStatus(socketProxy, enabled) {
     // 恢复状态显示
     const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
     proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
+    proxyStatus.title = proxyStatus.textContent;
     proxySwitch.disabled = false;
 
   } catch (error) {
@@ -290,6 +294,7 @@ async function updateSocketProxyStatus(socketProxy, enabled) {
     const proxyStatus = document.getElementById('proxy-status');
     const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
     proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
+    proxyStatus.title = proxyStatus.textContent;
 
     console.error('代理状态更新失败，请重试');
   } finally {

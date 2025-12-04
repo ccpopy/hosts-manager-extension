@@ -60,7 +60,28 @@ export default class StorageService {
    */
   static async getSocketProxy () {
     const { socketProxy = {} } = await this.get('socketProxy');
-    return socketProxy;
+    const defaultProxy = {
+      host: '',
+      port: '',
+      enabled: false,
+      protocol: 'SOCKS5',
+      auth: {
+        enabled: false,
+        username: '',
+        password: ''
+      },
+      bypassList: []
+    };
+
+    return {
+      ...defaultProxy,
+      ...socketProxy,
+      auth: {
+        ...defaultProxy.auth,
+        ...(socketProxy.auth || {})
+      },
+      bypassList: Array.isArray(socketProxy.bypassList) ? socketProxy.bypassList : []
+    };
   }
 
   /**

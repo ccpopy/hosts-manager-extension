@@ -19,7 +19,8 @@ const CONSTANTS = {
       enabled: false,
       username: '',
       password: ''
-    }
+    },
+    bypassList: []
   }
 };
 
@@ -142,7 +143,15 @@ async function activateAllGroups(hostsGroups) {
 // Setup storage change listener
 function setupStorageListener() {
   chrome.storage.onChanged.addListener((changes) => {
+    console.log('[Storage] Changes detected:', Object.keys(changes));
+    if (changes.socketProxy) {
+      console.log('[Storage] socketProxy changed:', {
+        oldBypassList: changes.socketProxy.oldValue?.bypassList,
+        newBypassList: changes.socketProxy.newValue?.bypassList
+      });
+    }
     if (shouldUpdateHostsMap(changes)) {
+      console.log('[Storage] Triggering hosts map update');
       throttledUpdateHostsMap();
     }
   });
@@ -287,15 +296,28 @@ async function updateProxySettings() {
     const config = generateProxyConfig(state.activeHostsMap, socketProxy);
 
     // Generate config hash to detect real changes
-    const configHash = generateConfigHash(config);
+    const configHash = generateConfigHash(state.activeHostsMap, socketProxy);
 
-    if (state.lastConfigHash === configHash) {
-      return;
-    }
+    // Debug: log hash comparison
+    console.log('[Proxy] Config hash comparison:', {
+      oldHash: state.lastConfigHash ? state.lastConfigHash.substring(0, 100) + '...' : 'null',
+      newHash: configHash.substring(0, 100) + '...',
+      changed: state.lastConfigHash !== configHash,
+      bypassList: socketProxy.bypassList
+    });
+
+    // Always clear and re-apply to ensure Chrome picks up changes
+    // Chrome's PAC script caching can be aggressive
+    await clearProxySettings();
+
+    // Delay to ensure Chrome processes the clear
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     await applyProxyConfig(config);
     state.currentConfig = config;
     state.lastConfigHash = configHash;
+
+    console.log('[Proxy] Config applied successfully, bypassList:', socketProxy.bypassList);
 
   } catch (error) {
     handleProxyError(error);
@@ -325,17 +347,49 @@ async function forceClearProxySettings() {
 }
 
 // Generate configuration hash for change detection
-function generateConfigHash(config) {
-  if (!config) return 'empty';
+function generateConfigHash(hostsMap, socketProxy) {
+  if (!hostsMap && !socketProxy) return 'empty';
 
-  // Create a simplified version for hashing
-  const simplified = {
-    mode: config.mode,
-    hosts: Object.keys(state.activeHostsMap).sort().join(','),
-    pacData: config.pacScript ? config.pacScript.data.length : 0
+  const normalizedHosts = Object.keys(hostsMap || {})
+    .sort()
+    .map(domain => `${domain}:${hostsMap[domain]}`)
+    .join('|');
+
+  // Normalize bypass rules the same way as buildBypassRules does
+  const bypassList = socketProxy && Array.isArray(socketProxy.bypassList)
+    ? socketProxy.bypassList
+    : [];
+  const normalizedBypass = bypassList
+    .map(rule => normalizeBypassRule(rule))
+    .filter(Boolean)
+    .sort();
+
+  const normalizedProxy = {
+    enabled: !!(socketProxy && socketProxy.enabled),
+    host: socketProxy?.host || '',
+    port: socketProxy?.port || '',
+    protocol: socketProxy?.protocol || 'SOCKS5',
+    auth: {
+      enabled: !!(socketProxy && socketProxy.auth && socketProxy.auth.enabled),
+      username: socketProxy?.auth?.username || '',
+      password: socketProxy?.auth?.password || ''
+    },
+    bypass: normalizedBypass
   };
 
-  return JSON.stringify(simplified);
+  return JSON.stringify({
+    hosts: normalizedHosts,
+    proxy: normalizedProxy
+  });
+}
+
+// Ensure PAC script data is ASCII-only to satisfy Chrome requirements
+function safeJsonStringify(obj) {
+  const json = JSON.stringify(obj || {});
+  return json.replace(/[\u007F-\uFFFF]/g, (ch) => {
+    const code = ch.charCodeAt(0).toString(16);
+    return '\\u' + ('0000' + code).slice(-4);
+  });
 }
 
 // Check if update should continue based on error count
@@ -400,10 +454,24 @@ async function applyProxyConfig(config) {
 
 // Generate PAC script with cache busting
 function generatePacScript(hostsMapping, socketProxy) {
+  const hostsJson = safeJsonStringify(hostsMapping || {});
+  const bypass = buildBypassRules(socketProxy);
+  const bypassExactJson = safeJsonStringify(bypass.exact || {});
+  const bypassSuffixJson = safeJsonStringify(bypass.suffixes || []);
+
+  // Debug: log bypass rules being applied
+  console.log('[PAC] Generating PAC script with bypass rules:', {
+    exact: bypass.exact,
+    suffixes: bypass.suffixes,
+    rawBypassList: socketProxy?.bypassList
+  });
+
   const pacComponents = {
-    hostsMap: JSON.stringify(hostsMapping || {}),
+    hostsJson,
     socksEnabled: socketProxy && socketProxy.enabled,
     proxyString: buildProxyString(socketProxy),
+    bypassExactJson,
+    bypassSuffixJson,
     timestamp: Date.now()
   };
 
@@ -446,52 +514,127 @@ function buildAuthString(auth) {
   return `${auth.username}:${auth.password}`;
 }
 
-// Build PAC script content with dynamic generation
-function buildPacScriptContent({ hostsMap, socksEnabled, proxyString, timestamp }) {
-  // Add timestamp comment to ensure script is unique
+// Normalize bypass rule for PAC usage
+function normalizeBypassRule(rule) {
+  if (!rule || typeof rule !== 'string') return null;
+
+  let value = rule.trim().toLowerCase();
+  if (!value) return null;
+
+  const isWildcard = value.startsWith('*.');
+  if (isWildcard) {
+    value = value.slice(2);
+    if (!value) return null;
+  }
+
+  if (value === 'localhost') {
+    return isWildcard ? null : 'localhost';
+  }
+
+  const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?$/;
+  const ipv6Pattern = /^\[?[0-9a-f:]+\]?$/i;
+  const domainPattern = /^([a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+  const singleLabelPattern = /^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$/;
+
+  if (!(ipv4Pattern.test(value) || ipv6Pattern.test(value) || domainPattern.test(value) || singleLabelPattern.test(value))) {
+    return null;
+  }
+
+  return isWildcard ? `*.${value}` : value;
+}
+
+// Build bypass rules for PAC script
+function buildBypassRules(socketProxy) {
+  const bypassList = socketProxy && Array.isArray(socketProxy.bypassList)
+    ? socketProxy.bypassList
+    : [];
+
+  const exact = {};
+  const suffixes = [];
+  const seenExact = new Set();
+  const seenSuffix = new Set();
+
+  bypassList.forEach(rawRule => {
+    const rule = normalizeBypassRule(rawRule);
+    if (!rule) return;
+
+    if (rule.startsWith('*.')) {
+      const suffix = rule.slice(2);
+      if (seenSuffix.has(suffix)) return;
+      seenSuffix.add(suffix);
+      suffixes.push(suffix);
+    } else {
+      if (seenExact.has(rule)) return;
+      seenExact.add(rule);
+      exact[rule] = true;
+    }
+  });
+
+  return { exact, suffixes };
+}
+
+// Build PAC script content with dynamic generation (ASCII only)
+function buildPacScriptContent({ hostsJson, socksEnabled, proxyString, bypassExactJson, bypassSuffixJson, timestamp }) {
+  // All comments must be ASCII only to satisfy Chrome PAC script requirements
   return `
-  // Generated at: ${timestamp}
   function FindProxyForURL(url, host) {
-    var hostsMapping = ${hostsMap};
-    
+    var _ts = ${timestamp};
+    var hostsMapping = ${hostsJson};
+    var bypassExact = ${bypassExactJson};
+    var bypassSuffixes = ${bypassSuffixJson};
+
+    function isBypassed(target) {
+      if (bypassExact[target]) {
+        return true;
+      }
+      for (var i = 0; i < bypassSuffixes.length; i++) {
+        var suffix = bypassSuffixes[i];
+        if (target === suffix || (target.length > suffix.length && target.slice(-suffix.length - 1) === '.' + suffix)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
     var domainPart = host;
     var port = "80";
-    
+
     var colonPos = host.indexOf(":");
     if (colonPos !== -1) {
       domainPart = host.substring(0, colonPos);
       port = host.substring(colonPos + 1);
     }
-    
+
     domainPart = domainPart.toLowerCase();
-    
-    // Direct connection for local addresses
-    if (isPlainHostName(domainPart) || 
-        domainPart === 'localhost' || 
+
+    if (isPlainHostName(domainPart) ||
+        domainPart === 'localhost' ||
         domainPart === '127.0.0.1' ||
         domainPart.indexOf('.local') !== -1) {
       return 'DIRECT';
     }
-    
-    // Check hosts mapping
+
+    if (isBypassed(domainPart)) {
+      return 'DIRECT';
+    }
+
     if (hostsMapping[domainPart]) {
       var mappedIP = hostsMapping[domainPart];
       var mappedPort = port;
-      
+
       if (mappedIP.indexOf(':') !== -1) {
         var parts = mappedIP.split(':');
         mappedIP = parts[0];
         mappedPort = parts[1];
       }
-      
+
       if (url.indexOf('https://') === 0) {
         ${socksEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
       } else {
         return 'PROXY ' + mappedIP + ':' + mappedPort;
       }
     }
-    
-    // Default proxy behavior
+
     ${socksEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
   }`;
 }

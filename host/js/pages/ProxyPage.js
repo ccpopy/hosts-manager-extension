@@ -23,7 +23,10 @@ export default class ProxyPage {
       authEnabledCheckbox: null,
       usernameInput: null,
       passwordInput: null,
-      saveButton: null
+      saveButton: null,
+      bypassInput: null,
+      bypassCounter: null,
+      testUrlInput: null
     };
 
     // 订阅状态变化
@@ -75,6 +78,7 @@ export default class ProxyPage {
 
     // 初始化表单
     this.updateFormState();
+    this.updateBypassCounter();
   }
 
   /**
@@ -319,20 +323,100 @@ export default class ProxyPage {
     authSection.appendChild(authForm);
     formContainer.appendChild(authSection);
 
-    // 测试连接按钮
+    // 白名单部分
+    const bypassSection = document.createElement('div');
+    bypassSection.className = 'form-section';
+    bypassSection.style.marginTop = '24px';
+
+    const bypassTitle = document.createElement('h3');
+    bypassTitle.className = 'section-title';
+    bypassTitle.textContent = '直连白名单';
+    bypassSection.appendChild(bypassTitle);
+
+    const bypassDesc = document.createElement('p');
+    bypassDesc.className = 'field-hint';
+    bypassDesc.textContent = '命中下列域名或 IP 时不经过 Socket 代理（支持 *.example.com），一行一条规则。';
+    bypassSection.appendChild(bypassDesc);
+
+    const bypassGroup = document.createElement('div');
+    bypassGroup.className = 'form-group';
+
+    const bypassLabel = document.createElement('label');
+    bypassLabel.textContent = '不走代理的规则:';
+    bypassLabel.htmlFor = 'proxy-bypass-list';
+
+    this.elements.bypassInput = document.createElement('textarea');
+    this.elements.bypassInput.id = 'proxy-bypass-list';
+    this.elements.bypassInput.rows = 6;
+    this.elements.bypassInput.placeholder = '例如：\nlocalhost\n*.internal.test\n10.0.0.0\napi.local';
+    this.elements.bypassInput.value = (proxySettings.bypassList || []).join('\n');
+
+    this.elements.bypassInput.addEventListener('input', () => {
+      this.updateBypassCounter();
+      this.scheduleValidation('bypass', this.elements.bypassInput);
+    });
+
+    bypassGroup.appendChild(bypassLabel);
+    bypassGroup.appendChild(this.elements.bypassInput);
+
+    const bypassFooter = document.createElement('div');
+    bypassFooter.className = 'field-hint';
+    bypassFooter.style.marginTop = '6px';
+
+    this.elements.bypassCounter = document.createElement('span');
+    this.elements.bypassCounter.textContent = '0 条规则';
+    bypassFooter.appendChild(this.elements.bypassCounter);
+
+    bypassSection.appendChild(bypassGroup);
+    bypassSection.appendChild(bypassFooter);
+    formContainer.appendChild(bypassSection);
+
+    // 测试连接部分
     const testSection = document.createElement('div');
     testSection.className = 'form-section';
     testSection.style.marginTop = '24px';
 
+    const testTitle = document.createElement('h3');
+    testTitle.className = 'section-title';
+    testTitle.textContent = '连接测试';
+    testSection.appendChild(testTitle);
+
+    const testRow = document.createElement('div');
+    testRow.className = 'form-row';
+    testRow.style.alignItems = 'flex-end';
+
+    // 测试URL输入框
+    const testUrlGroup = document.createElement('div');
+    testUrlGroup.className = 'form-group';
+    testUrlGroup.style.flex = '1';
+    testUrlGroup.style.marginRight = '12px';
+
+    const testUrlLabel = document.createElement('label');
+    testUrlLabel.textContent = '测试地址:';
+    testUrlLabel.htmlFor = 'test-url';
+
+    this.elements.testUrlInput = document.createElement('input');
+    this.elements.testUrlInput.type = 'text';
+    this.elements.testUrlInput.id = 'test-url';
+    this.elements.testUrlInput.placeholder = '输入要测试的域名';
+    this.elements.testUrlInput.value = 'google.com';
+
+    testUrlGroup.appendChild(testUrlLabel);
+    testUrlGroup.appendChild(this.elements.testUrlInput);
+    testRow.appendChild(testUrlGroup);
+
+    // 测试按钮
     const testButton = document.createElement('button');
     testButton.type = 'button';
     testButton.className = 'button button-default';
     testButton.textContent = '测试连接';
+    testButton.style.marginBottom = '0';
     testButton.addEventListener('click', () => {
       this.testProxyConnection();
     });
 
-    testSection.appendChild(testButton);
+    testRow.appendChild(testButton);
+    testSection.appendChild(testRow);
     formContainer.appendChild(testSection);
 
     // 保存按钮
@@ -409,6 +493,17 @@ export default class ProxyPage {
           errorMessage = '启用认证时密码不能为空';
         }
         break;
+      case 'bypass': {
+        const { rules, invalid } = ProxyService.normalizeBypassRules(value);
+        if (invalid.length > 0) {
+          isValid = false;
+          errorMessage = `发现 ${invalid.length} 条无效规则，例如: ${invalid[0]}`;
+        } else {
+          // 使用提示展示规则数量
+          input.title = `${rules.length} 条白名单规则`;
+        }
+        break;
+      }
     }
 
     // 更新输入框样式
@@ -432,6 +527,7 @@ export default class ProxyPage {
   async testProxyConnection () {
     const host = this.elements.hostInput ? this.elements.hostInput.value.trim() : '';
     const port = this.elements.portInput ? this.elements.portInput.value.trim() : '';
+    const testUrl = this.elements.testUrlInput ? this.elements.testUrlInput.value.trim() : 'google.com';
 
     if (!host || !port) {
       Message.error('请先填写代理主机和端口');
@@ -448,8 +544,13 @@ export default class ProxyPage {
       return;
     }
 
+    if (!testUrl) {
+      Message.error('请输入测试地址');
+      return;
+    }
+
     try {
-      Message.info('正在测试代理连接...');
+      Message.info(`正在测试连接 ${testUrl}...`);
 
       // 创建临时代理配置进行验证
       const testConfig = {
@@ -467,10 +568,49 @@ export default class ProxyPage {
       // 使用ProxyService验证配置
       const validation = ProxyService.validateProxyConfig(testConfig);
 
-      if (validation.valid) {
-        Message.success('代理配置验证通过！注意：这只是格式验证，实际连通性需要保存后测试。');
-      } else {
+      if (!validation.valid) {
         Message.error('代理配置验证失败：' + validation.message);
+        return;
+      }
+
+      // 尝试通过 fetch 测试连接（需要先保存代理设置）
+      const currentState = StateService.getState();
+      const isProxySaved = currentState.socketProxy &&
+        currentState.socketProxy.enabled &&
+        currentState.socketProxy.host === host &&
+        currentState.socketProxy.port === port;
+
+      if (!isProxySaved) {
+        Message.warning('代理配置验证通过。请先保存设置后再测试实际连通性。');
+        return;
+      }
+
+      // 构建测试URL
+      let fullTestUrl = testUrl;
+      if (!testUrl.startsWith('http://') && !testUrl.startsWith('https://')) {
+        fullTestUrl = 'https://' + testUrl;
+      }
+
+      // 执行实际连接测试
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      try {
+        const response = await fetch(fullTestUrl, {
+          method: 'HEAD',
+          mode: 'no-cors',
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        Message.success(`连接测试成功！代理工作正常。`);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          Message.error('连接测试超时（10秒），请检查代理设置或网络连接。');
+        } else {
+          // no-cors 模式下可能会抛出错误，但实际上请求可能成功了
+          Message.warning('连接测试完成，但无法确认结果。请在浏览器中访问目标网站验证。');
+        }
       }
     } catch (error) {
       console.error('测试代理连接失败:', error);
@@ -567,6 +707,19 @@ export default class ProxyPage {
   }
 
   /**
+   * 更新白名单计数显示
+   */
+  updateBypassCounter () {
+    if (!this.elements || !this.elements.bypassInput || !this.elements.bypassCounter) return;
+
+    const { rules, invalid } = ProxyService.normalizeBypassRules(this.elements.bypassInput.value);
+    const invalidText = invalid.length ? `，${invalid.length} 条无效` : '';
+
+    this.elements.bypassCounter.textContent = `${rules.length} 条规则${invalidText}`;
+    this.elements.bypassCounter.style.color = invalid.length ? 'var(--error-color)' : 'var(--gray-600)';
+  }
+
+  /**
    * 处理保存代理设置
    */
   async handleSaveProxy () {
@@ -601,6 +754,13 @@ export default class ProxyPage {
       const username = this.elements.usernameInput ? this.elements.usernameInput.value.trim() : '';
       const password = this.elements.passwordInput ? this.elements.passwordInput.value.trim() : '';
       const protocol = this.elements.protocolSelect ? this.elements.protocolSelect.value : 'SOCKS5';
+      const bypassRaw = this.elements.bypassInput ? this.elements.bypassInput.value : '';
+      const { rules: bypassList, invalid: invalidBypass } = ProxyService.normalizeBypassRules(bypassRaw);
+
+      if (invalidBypass.length > 0) {
+        Message.error(`白名单存在无效规则，例如: ${invalidBypass[0]}`);
+        return;
+      }
 
       // 构建代理配置
       const proxyConfig = {
@@ -608,6 +768,7 @@ export default class ProxyPage {
         port,
         enabled,
         protocol,
+        bypassList,
         auth: {
           enabled: authEnabled,
           username,
@@ -669,6 +830,11 @@ export default class ProxyPage {
 
       if (this.elements.passwordInput && proxySettings.auth) {
         this.elements.passwordInput.value = proxySettings.auth.password || '';
+      }
+
+      if (this.elements.bypassInput) {
+        this.elements.bypassInput.value = (proxySettings.bypassList || []).join('\n');
+        this.updateBypassCounter();
       }
 
       // 更新表单状态

@@ -2,7 +2,14 @@
  * 代理服务
  * 处理与代理相关的操作，包括代理设置更新和规则导入
  */
-import { parseHostRule, isValidIp, isValidDomain, normalizeHostRule } from '../utils/ValidationUtils.js';
+import {
+  parseHostRule,
+  isValidIp,
+  isValidDomain,
+  normalizeHostRule,
+  normalizeBypassRules as normalizeBypassRulesUtil,
+  normalizeBypassRule
+} from '../utils/ValidationUtils.js';
 import MessageBridge from '../utils/MessageBridge.js';
 
 export default class ProxyService {
@@ -28,6 +35,17 @@ export default class ProxyService {
   static validateProxyConfig(proxy) {
     if (!proxy) {
       return { valid: false, message: '代理配置不能为空' };
+    }
+
+    // 验证白名单
+    if (proxy.bypassList) {
+      const { invalid } = this.normalizeBypassRules(proxy.bypassList);
+      if (invalid.length > 0) {
+        return {
+          valid: false,
+          message: `白名单存在无效规则，例如: ${invalid[0]}`
+        };
+      }
     }
 
     // 如果禁用，则不需要验证其他字段
@@ -62,6 +80,27 @@ export default class ProxyService {
     }
 
     return { valid: true };
+  }
+
+  /**
+   * 规范化代理白名单规则
+   * @param {string|Array<string>} rules - 原始规则
+   * @returns {{rules: Array<string>, invalid: Array<string>}} - 规范化后的规则及无效条目
+   */
+  static normalizeBypassRules(rules) {
+    const normalized = normalizeBypassRulesUtil(rules);
+    const invalid = [];
+
+    // 收集无效规则
+    const list = Array.isArray(rules) ? rules : (rules || '').split(/\r?\n|,/);
+    for (const raw of list) {
+      if (!raw || typeof raw !== 'string' || !raw.trim()) continue;
+      if (!normalizeBypassRule(raw)) {
+        invalid.push(raw.trim());
+      }
+    }
+
+    return { rules: normalized, invalid };
   }
 
   /**

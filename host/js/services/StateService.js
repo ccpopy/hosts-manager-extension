@@ -3,24 +3,28 @@
  * 提供全局状态管理并与 Chrome 存储同步
  */
 import MessageBridge from '../utils/MessageBridge.js';
+import { normalizeBypassRules } from '../utils/ValidationUtils.js';
 
 class StateService {
   constructor() {
     // 初始状态
+    this.DEFAULT_SOCKET_PROXY = {
+      host: '',
+      port: '',
+      enabled: false,
+      protocol: 'SOCKS5',
+      auth: {
+        enabled: false,
+        username: '',
+        password: ''
+      },
+      bypassList: []
+    };
+
     this.state = {
       hostsGroups: [],
       activeGroups: [],
-      socketProxy: {
-        host: '',
-        port: '',
-        enabled: false,
-        protocol: 'SOCKS5',
-        auth: {
-          enabled: false,
-          username: '',
-          password: ''
-        }
-      },
+      socketProxy: { ...this.DEFAULT_SOCKET_PROXY },
       showAddGroupForm: false
     };
 
@@ -53,7 +57,7 @@ class StateService {
 
       this.state.hostsGroups = data.hostsGroups || [];
       this.state.activeGroups = data.activeGroups || [];
-      this.state.socketProxy = data.socketProxy || this.state.socketProxy;
+      this.state.socketProxy = this.normalizeSocketProxyConfig(data.socketProxy || this.state.socketProxy);
       this.state.showAddGroupForm = data.showAddGroupForm || false;
 
       // 构建搜索索引
@@ -125,7 +129,9 @@ class StateService {
       }
 
       if (changes.socketProxy) {
-        this.state.socketProxy = changes.socketProxy.newValue || this.state.socketProxy;
+        this.state.socketProxy = this.normalizeSocketProxyConfig(
+          changes.socketProxy.newValue || this.state.socketProxy
+        );
         stateChanged = true;
       }
 
@@ -138,6 +144,25 @@ class StateService {
         this.notifyListeners();
       }
     });
+  }
+
+  /**
+   * 规范化Socket代理配置，填充默认值并清洗白名单
+   * @param {object} proxy - 原始代理配置
+   * @returns {object} - 规范化后的配置
+   */
+  normalizeSocketProxyConfig(proxy) {
+    const merged = {
+      ...this.DEFAULT_SOCKET_PROXY,
+      ...(proxy || {}),
+      auth: {
+        ...this.DEFAULT_SOCKET_PROXY.auth,
+        ...(proxy && proxy.auth)
+      }
+    };
+
+    merged.bypassList = normalizeBypassRules(merged.bypassList || []);
+    return merged;
   }
 
   /**
@@ -516,16 +541,17 @@ class StateService {
     // 备份原始代理配置
     const originalProxy = { ...this.state.socketProxy };
 
-    // 合并认证信息
-    if (!proxy.auth && this.state.socketProxy.auth) {
-      proxy.auth = { ...this.state.socketProxy.auth };
-    }
-
-    // 应用更新
-    this.state.socketProxy = {
+    // 规范化并合并配置
+    const mergedProxy = this.normalizeSocketProxyConfig({
       ...this.state.socketProxy,
-      ...proxy
-    };
+      ...(proxy || {}),
+      auth: {
+        ...this.state.socketProxy.auth,
+        ...(proxy && proxy.auth)
+      }
+    });
+
+    this.state.socketProxy = mergedProxy;
 
     try {
       await this.saveState(true);
@@ -657,7 +683,7 @@ class StateService {
 
       this.state.hostsGroups = data.hostsGroups || [];
       this.state.activeGroups = data.activeGroups || [];
-      this.state.socketProxy = data.socketProxy || this.state.socketProxy;
+      this.state.socketProxy = this.normalizeSocketProxyConfig(data.socketProxy || this.state.socketProxy);
       this.state.showAddGroupForm = data.showAddGroupForm || false;
 
       this.buildSearchIndices();

@@ -184,6 +184,81 @@ export function isValidHostRule (ip, domain) {
 }
 
 /**
+ * 验证单标签主机名（用于本地开发场景）
+ * @param {string} host - 主机名
+ * @returns {boolean} - 是否合法
+ */
+function isValidSingleLabelHost (host) {
+  if (!host || typeof host !== 'string') return false;
+  const trimmed = host.trim();
+  return /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$/.test(trimmed);
+}
+
+/**
+ * 规范化白名单规则
+ * 支持 IP、域名、单标签主机名以及通配符域名 (*.example.com)
+ * @param {string} rule - 原始规则
+ * @returns {string|null} - 规范化后的规则，非法时返回 null
+ */
+export function normalizeBypassRule (rule) {
+  if (!rule || typeof rule !== 'string') return null;
+
+  let value = rule.trim().toLowerCase();
+  if (!value) return null;
+
+  const isWildcard = value.startsWith('*.');
+  if (isWildcard) {
+    value = value.slice(2);
+    if (!value) return null;
+  }
+
+  // 特殊处理 localhost
+  if (value === 'localhost') {
+    return isWildcard ? null : 'localhost';
+  }
+
+  if (isValidIpAddress(value) || isValidDomain(value) || isValidSingleLabelHost(value)) {
+    return isWildcard ? `*.${value}` : value;
+  }
+
+  return null;
+}
+
+/**
+ * 验证白名单规则有效性
+ * @param {string} rule - 白名单规则
+ * @returns {boolean} - 是否有效
+ */
+export function isValidBypassRule (rule) {
+  return normalizeBypassRule(rule) !== null;
+}
+
+/**
+ * 将白名单规则列表进行清洗和去重
+ * @param {string|Array<string>} rules - 原始规则或规则数组
+ * @returns {Array<string>} - 规范化且去重的规则数组
+ */
+export function normalizeBypassRules (rules) {
+  const inputList = Array.isArray(rules)
+    ? rules
+    : (rules || '').split(/\r?\n|,/);
+
+  const normalized = [];
+  const seen = new Set();
+
+  for (const rawRule of inputList) {
+    const rule = normalizeBypassRule(rawRule);
+    if (!rule) continue;
+
+    if (seen.has(rule)) continue;
+    seen.add(rule);
+    normalized.push(rule);
+  }
+
+  return normalized;
+}
+
+/**
  * 验证SOCKS代理配置
  * @param {object} proxy - 代理配置对象
  * @returns {boolean} - 是否合法
