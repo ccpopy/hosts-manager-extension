@@ -52,7 +52,8 @@ export default class HostsPage {
       totalHeight: 0,       // 总高度
       visibleItems: [],     // 可见项
       scrollPosition: 0,    // 滚动位置
-      viewportHeight: 0     // 视口高度
+      viewportHeight: 0,    // 视口高度
+      startIndex: 0         // 当前可见区域的起始索引
     };
 
     // 性能优化: 防抖搜索，增加延迟时间
@@ -468,9 +469,16 @@ export default class HostsPage {
     // 计算视口高度
     try {
       const rect = this.virtualScroll.container.getBoundingClientRect();
-      this.virtualScroll.viewportHeight = window.innerHeight - rect.top;
+      const availableHeight = Math.max(320, window.innerHeight - rect.top - 40);
+      this.virtualScroll.container.style.maxHeight = `${availableHeight}px`;
+      this.virtualScroll.container.style.overflowY = 'auto';
+      this.virtualScroll.container.style.position = 'relative';
+      this.virtualScroll.viewportHeight = this.virtualScroll.container.clientHeight || availableHeight;
     } catch (error) {
       this.virtualScroll.viewportHeight = 600;
+      this.virtualScroll.container.style.maxHeight = '600px';
+      this.virtualScroll.container.style.overflowY = 'auto';
+      this.virtualScroll.container.style.position = 'relative';
     }
 
     // 绑定事件处理器，保存引用以便后续移除
@@ -517,7 +525,9 @@ export default class HostsPage {
 
     try {
       const rect = this.groupListContainer.getBoundingClientRect();
-      this.virtualScroll.viewportHeight = window.innerHeight - rect.top;
+      const availableHeight = Math.max(320, window.innerHeight - rect.top - 40);
+      this.groupListContainer.style.maxHeight = `${availableHeight}px`;
+      this.virtualScroll.viewportHeight = this.groupListContainer.clientHeight || availableHeight;
       this.updateVisibleItems();
     } catch (error) {
       console.error('处理窗口大小变化时出错:', error);
@@ -528,7 +538,7 @@ export default class HostsPage {
    * 更新可见项目
    */
   updateVisibleItems () {
-    if (!VIRTUALIZATION.enabled || !this.virtualScroll.container) return;
+    if (!VIRTUALIZATION.enabled || !this.virtualScroll.container || !this.groupList) return;
 
     try {
       const state = StateService.getState();
@@ -536,6 +546,7 @@ export default class HostsPage {
 
       // 如果总项数少于阈值，禁用虚拟化
       if (items.length < VIRTUALIZATION.renderThreshold) {
+        this.resetVirtualLayout();
         this.renderAllGroups();
         return;
       }
@@ -552,14 +563,13 @@ export default class HostsPage {
 
       // 更新可见项
       this.virtualScroll.visibleItems = items.slice(startIndex, endIndex + 1);
+      this.virtualScroll.startIndex = startIndex;
 
       // 更新滚动容器高度
       this.virtualScroll.totalHeight = items.length * itemHeight;
 
-      // 安全地设置容器高度
-      if (this.virtualScroll.container && this.virtualScroll.container.style) {
-        this.virtualScroll.container.style.height = `${this.virtualScroll.totalHeight}px`;
-      }
+      // 通过内边距撑起滚动高度
+      this.applyVirtualPadding(startIndex, endIndex);
 
       // 渲染可见项
       this.renderVisibleGroups();
@@ -584,6 +594,39 @@ export default class HostsPage {
   }
 
   /**
+   * 设置虚拟滚动的上下内边距以保持正确的滚动高度
+   * @param {number} startIndex - 可见项开始索引
+   * @param {number} endIndex - 可见项结束索引
+   */
+  applyVirtualPadding (startIndex, endIndex) {
+    if (!this.groupList) return;
+
+    const { itemHeight } = VIRTUALIZATION;
+    const topPadding = startIndex * itemHeight;
+    const bottomPadding = Math.max(
+      this.virtualScroll.totalHeight - (endIndex + 1) * itemHeight,
+      0
+    );
+
+    this.groupList.style.paddingTop = `${topPadding}px`;
+    this.groupList.style.paddingBottom = `${bottomPadding}px`;
+  }
+
+  /**
+   * 重置虚拟滚动的布局样式
+   */
+  resetVirtualLayout () {
+    if (this.groupList) {
+      this.groupList.style.paddingTop = '0px';
+      this.groupList.style.paddingBottom = '0px';
+      this.groupList.style.height = 'auto';
+    }
+
+    this.virtualScroll.totalHeight = 0;
+    this.virtualScroll.startIndex = 0;
+  }
+
+  /**
    * 渲染分组列表
    */
   renderGroupList () {
@@ -599,13 +642,10 @@ export default class HostsPage {
     } else {
       // 判断是否需要使用虚拟化
       if (VIRTUALIZATION.enabled && state.hostsGroups.length >= VIRTUALIZATION.renderThreshold) {
-        // 设置容器样式
-        this.groupList.style.position = 'relative';
-        this.groupList.style.height = `${state.hostsGroups.length * VIRTUALIZATION.itemHeight}px`;
-
         // 初始渲染可见项
         this.updateVisibleItems();
       } else {
+        this.resetVirtualLayout();
         // 直接渲染所有分组
         this.renderGroups(state.hostsGroups);
       }

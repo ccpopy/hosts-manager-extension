@@ -24,6 +24,14 @@ const CONSTANTS = {
   }
 };
 
+// Debug logging toggle to avoid noisy console output in production
+const DEBUG_LOGS_ENABLED = false;
+const debugLog = (...args) => {
+  if (DEBUG_LOGS_ENABLED) {
+    console.log(...args);
+  }
+};
+
 // Global state
 const state = {
   activeHostsMap: {},
@@ -143,15 +151,15 @@ async function activateAllGroups(hostsGroups) {
 // Setup storage change listener
 function setupStorageListener() {
   chrome.storage.onChanged.addListener((changes) => {
-    console.log('[Storage] Changes detected:', Object.keys(changes));
+    debugLog('[Storage] Changes detected:', Object.keys(changes));
     if (changes.socketProxy) {
-      console.log('[Storage] socketProxy changed:', {
+      debugLog('[Storage] socketProxy changed:', {
         oldBypassList: changes.socketProxy.oldValue?.bypassList,
         newBypassList: changes.socketProxy.newValue?.bypassList
       });
     }
     if (shouldUpdateHostsMap(changes)) {
-      console.log('[Storage] Triggering hosts map update');
+      debugLog('[Storage] Triggering hosts map update');
       throttledUpdateHostsMap();
     }
   });
@@ -297,14 +305,19 @@ async function updateProxySettings() {
 
     // Generate config hash to detect real changes
     const configHash = generateConfigHash(state.activeHostsMap, socketProxy);
+    const configChanged = state.lastConfigHash !== configHash || !state.currentConfig;
 
     // Debug: log hash comparison
-    console.log('[Proxy] Config hash comparison:', {
+    debugLog('[Proxy] Config hash comparison:', {
       oldHash: state.lastConfigHash ? state.lastConfigHash.substring(0, 100) + '...' : 'null',
       newHash: configHash.substring(0, 100) + '...',
-      changed: state.lastConfigHash !== configHash,
+      changed: configChanged,
       bypassList: socketProxy.bypassList
     });
+
+    if (!configChanged) {
+      return;
+    }
 
     // Always clear and re-apply to ensure Chrome picks up changes
     // Chrome's PAC script caching can be aggressive
@@ -317,7 +330,7 @@ async function updateProxySettings() {
     state.currentConfig = config;
     state.lastConfigHash = configHash;
 
-    console.log('[Proxy] Config applied successfully, bypassList:', socketProxy.bypassList);
+    debugLog('[Proxy] Config applied successfully, bypassList:', socketProxy.bypassList);
 
   } catch (error) {
     handleProxyError(error);
@@ -460,7 +473,7 @@ function generatePacScript(hostsMapping, socketProxy) {
   const bypassSuffixJson = safeJsonStringify(bypass.suffixes || []);
 
   // Debug: log bypass rules being applied
-  console.log('[PAC] Generating PAC script with bypass rules:', {
+  debugLog('[PAC] Generating PAC script with bypass rules:', {
     exact: bypass.exact,
     suffixes: bypass.suffixes,
     rawBypassList: socketProxy?.bypassList

@@ -4,7 +4,7 @@
   <img src="host/images/icon128.png" alt="Logo">
 </p>
 
-<h3 align="center">一个用于管理 hosts 映射的浏览器扩展，支持分组功能</h3>
+<p align="center">Browser extension for managing hosts mappings by groups, with optional socket proxy support.</p>
 
 <p align="center">
   <a href="https://github.com/ccpopy/hosts-manager-extension/releases"><img src="https://img.shields.io/github/v/release/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub release"></a>
@@ -12,218 +12,192 @@
   <a href="https://github.com/ccpopy/hosts-manager-extension/issues"><img src="https://img.shields.io/github/issues/ccpopy/hosts-manager-extension?style=flat-square" alt="GitHub issues"></a>
   <a href="https://github.com/ccpopy/hosts-manager-extension/blob/main/LICENSE"><img src="https://img.shields.io/github/license/ccpopy/hosts-manager-extension?style=flat-square" alt="License"></a>
   <a href="https://chromewebstore.google.com/detail/hosts-manager/ekofkbkmenfagdkijaplfbdcdnlddjod" target="_blank"><img src="https://img.shields.io/chrome-web-store/v/ekofkbkmenfagdkijaplfbdcdnlddjod?style=flat-square" alt="Chrome Web Store Version"></a>
-  <a href="https://microsoftedge.microsoft.com/addons/detail/hosts-manager/apeejdinnfjjlajmihbpojcapdkghbki" target="_blank"><img src="https://img.shields.io/badge/dynamic/json?label=Edge%20Addons&prefix=v&query=$.version&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/apeejdinnfjjlajmihbpojcapdkghbki&style=flat-square&color=0078D7" alt="Edge 拓展"></a>
+  <a href="https://microsoftedge.microsoft.com/addons/detail/hosts-manager/apeejdinnfjjlajmihbpojcapdkghbki" target="_blank"><img src="https://img.shields.io/badge/dynamic/json?label=Edge%20Addons&prefix=v&query=$.version&url=https://microsoftedge.microsoft.com/addons/getproductdetailsbycrxid/apeejdinnfjjlajmihbpojcapdkghbki&style=flat-square&color=0078D7" alt="Edge Addon"></a>
 </p>
 
-## 🎯 功能特点
+<p align="right"><a href="#english">English</a> | <a href="#zh-cn">简体中文</a></p>
 
-- 📁 **分组管理** - 按项目或用途组织你的 hosts 规则
-- 🔄 **快速切换** - 一键启用/禁用分组，无需重复编辑
-- 📝 **批量导入** - 支持从文件或剪贴板批量导入规则
-- 🌐 **Socket 代理** - 内置 Socket 代理配置支持
-- 💾 **本地存储** - 所有数据本地保存，安全可靠
-- 🎨 **现代界面** - 清爽简洁风格
+<a id="english"></a>
 
-## 📸 界面截图
+## English
 
-![主界面](screenshots/hosts.png)
+### What is this?
+Hosts Manager Extension lets you organize hosts mappings into reusable groups, toggle them with one click, and optionally route traffic through a socket proxy. All data stays local to your browser.
 
-<p align="center">主界面 - 分组管理</p>
+### Features
+- Grouped rule management for different projects or environments
+- One-click enable/disable for groups without re-editing
+- Bulk import from files or clipboard in standard hosts format
+- Built-in socket proxy configuration with bypass list support
+- Local persistence; no data leaves your machine
+- Clean, modern UI built for Chrome/Edge Manifest V3
 
-## 🚀 安装方法
+### Screenshots
+![Main interface](screenshots/hosts.png)
+<p align="center">Main interface with grouped hosts</p>
 
-### 方法一：从 Release 安装（推荐）
+### Installation
+- From Releases (recommended)
+  1. Download the latest `hosts-manager.zip` from [Releases](../../releases).
+  2. Extract it locally.
+  3. Open `chrome://extensions/`, enable "Developer mode", and choose "Load unpacked".
+  4. Select the extracted folder.
+- Via CRX
+  1. Download `hosts-manager.crx`.
+  2. Drag it onto the Chrome extensions page and confirm.
+- From source
+  ```bash
+  git clone https://github.com/ccpopy/hosts-manager-extension.git
+  cd hosts-manager-extension
+  ```
+  Then load the `host` directory via "Load unpacked" in Chrome/Edge.
 
-1. 前往 [Releases](../../releases) 页面
-2. 下载最新版本的 `hosts-manager.zip` 文件
-3. 解压到本地文件夹
-4. 打开 Chrome 浏览器，访问 `chrome://extensions/`
-5. 开启右上角的"开发者模式"
-6. 点击"加载已解压的扩展程序"
-7. 选择解压后的文件夹
+### Usage
+- Create a group and add rules (`IP domain`) under it.
+- Toggle a group to enable/disable all rules inside it.
+- Right-click a rule to edit or delete.
+- Bulk import supports the standard hosts format:
+  ```
+  # Dev env
+  192.168.1.100 dev.example.com
+  192.168.1.101 api.example.com
+  ```
+- Socket proxy setup: open Settings → Socket Proxy, enter server, port, protocol, optional auth, and bypass list, then save.
 
-### 方法二：使用 CRX 文件
+### Tech Stack
+- Vanilla JavaScript with Chrome/Edge Extensions API (Manifest V3)
+- GitHub Actions for packaging releases
 
-1. 下载 `hosts-manager.crx` 文件
-2. 打开 Chrome 扩展管理页面
-3. 将 CRX 文件拖放到页面中
-4. 确认安装
-
-### 方法三：从源码安装
-
-```bash
-# 克隆项目
-git clone https://github.com/ccpopy/hosts-manager-extension.git
-cd hosts-manager-extension
-
-# 在 Chrome 中加载
-# 1. 打开 chrome://extensions/
-# 2. 开启"开发者模式"
-# 3. 点击"加载已解压的扩展程序"
-# 4. 选择 host 目录
-```
-
-## 📖 使用说明
-
-### 基本操作
-
-1. **创建分组**：点击"新建分组"按钮，输入分组名称
-2. **添加规则**：在分组中添加 hosts 映射规则
-3. **启用/禁用**：使用开关控制分组的启用状态
-4. **编辑删除**：右键菜单提供编辑和删除功能
-
-### 批量导入
-
-支持标准的 hosts 文件格式：
-
-```
-# 开发环境
-192.168.1.100 dev.example.com
-192.168.1.101 api.example.com
-
-# 测试环境
-10.0.0.50 test.example.com
-10.0.0.51 api-test.example.com
-```
-
-### Socket 代理配置
-
-1. 点击工具栏的设置图标
-2. 选择"Socket 代理"
-3. 配置代理服务器地址和端口
-4. 选择需要代理的协议
-
-## 🛠️ 技术栈
-
-- **框架**：原生 JavaScript + Chrome Extensions API
-- **构建**：GitHub Actions 自动化构建
-- **版本**：Manifest V3
-
-## 📁 项目结构
-
+### Project Structure
 ```
 host/
-├── background.js              # 扩展的后台脚本，处理代理设置和hosts映射
-├── css/                       # 样式文件目录
-│   ├── page.css               # 主页面样式
-│   └── popup.css              # 弹出窗口样式
-├── images/                    # 图标资源目录
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
-├── js/                         # JavaScript代码目录
-│   ├── app.js                  # 主应用程序入口
-│   ├── page.js                 # 设置页面入口脚本
-│   ├── popup.js                # 弹出窗口脚本
-│   ├── components/             # UI组件
-│   │   ├── GroupForm.js        # 分组表单组件
-│   │   ├── GroupItem.js        # 分组项组件
-│   │   ├── HostItem.js         # 主机项组件
-│   │   ├── MenuItem.js         # 菜单项组件
-│   │   ├── Modal.js            # 模态框组件
-│   │   ├── Notice.js           # 提示组件
-│   │   └── SearchBar.js        # 搜索栏组件
-│   ├── pages/                  # 页面组件
-│   │   ├── HostsPage.js        # Hosts管理页面
-│   │   ├── ImportPage.js       # 批量导入页面
-│   │   └── ProxyPage.js        # Socket代理设置页面
-│   ├── services/               # 服务层
-│   │   ├── ProxyService.js     # 代理服务
-│   │   ├── SearchService.js    # 搜索服务
-│   │   ├── StateService.js     # 状态管理服务
-│   │   └── StorageService.js   # 存储服务
-│   └── utils/                  # 工具函数
-│       ├── MessageBridge.js    # 消息传递桥接工具
-│       ├── MessageUtils.js     # 消息通知工具
-│       └── ValidationUtils.js  # 验证工具
-│       └── PerformanceUtils.js # 性能优化工具
-├── manifest.json               # 扩展清单文件
-├── page.html                   # 设置页面HTML
-└── popup.html                  # 弹出窗口HTML
+├── background.js              # Service worker: proxy/PAC and hosts mapping
+├── css/
+│   ├── page.css               # Options page styles
+│   └── popup.css              # Popup styles
+├── images/                    # Icons
+├── js/
+│   ├── app.js                 # App shell and navigation
+│   ├── page.js                # Options entry
+│   ├── popup.js               # Popup entry
+│   ├── components/            # UI components
+│   ├── pages/                 # Page-level modules
+│   ├── services/              # State, proxy, search, storage
+│   └── utils/                 # Messaging, validation, performance helpers
+├── manifest.json              # Extension manifest (MV3)
+├── page.html                  # Options page
+└── popup.html                 # Toolbar popup
 ```
 
-## 👨‍💻 开发指南
+### Development
+- Local dev: edit code, then click "Reload" in the extensions page after changes.
+- Release: tag with `git tag vX.Y.Z && git push origin vX.Y.Z`; GitHub Actions builds ZIP/CRX and publishes a Release.
 
-### 本地开发
+### Notes
+- Requires Chrome/Edge 88+ (Manifest V3 support).
+- Proxy features need proxy permissions and may conflict with other proxy extensions.
+- Back up your configuration regularly.
 
-```bash
-# 克隆项目
-git clone https://github.com/ccpopy/hosts-manager-extension.git
-cd hosts-manager-extension
+### Roadmap
+- [ ] Internationalization toggle in UI
+- [x] Search within hosts rules
+- [x] Export/import groups
+- [ ] Performance optimizations for very large rule sets
 
-# 修改代码后，在扩展管理页面点击"重新加载"按钮
-```
+### License
+MIT License – see `LICENSE`.
 
-### 构建发布
-
-项目使用 GitHub Actions 自动构建：
-
-```bash
-# 创建新版本
-git tag v1.0.0
-git push origin v1.0.0
-
-# GitHub Actions 会自动：
-# 1. 打包 ZIP 文件
-# 2. 生成 CRX 文件
-# 3. 创建 Release
-# 4. 上传构建产物
-```
-
-## ⚠️ 注意事项
-
-- 需要 Chrome 88+ 版本（支持 Manifest V3）
-- 扩展需要代理权限来修改系统 hosts
-- 可能与其他代理类扩展冲突
-- 建议定期备份配置数据
-
-## 📋 待办清单
-
-### 功能增强
-
-- [ ] 🌍 **国际化支持** - 支持中文简体和英文切换
-- [x] 🔍 **搜索功能** - 在 hosts 规则中快速搜索
-- [x] 📤 **导出功能** - 导出分组配置为文件
-
-### 优化改进
-
-- [ ] ⚡ **性能优化** - 优化大量规则时的渲染性能
-
-### 平台支持
-
-- [x] 🖥️ **支持 Edge 扩展** - 发布到 Edge 扩展商店
-
-### 文档完善
-
-- [ ] 🌐 **英文文档** - 提供英文版 README
-
-欢迎参与开发，帮助完成这些功能！如有其他建议，请[提交 Issue](https://github.com/ccpopy/hosts-manager-extension/issues)。
-
-## 🤝 贡献指南
-
-欢迎贡献代码、报告问题或提出建议！
-
-1. Fork 本仓库
-2. 创建你的功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交你的更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启一个 Pull Request
-
-## 📜 许可证
-
-本项目基于 MIT 许可证开源 - 查看 [LICENSE](LICENSE) 文件了解详情
-
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=ccpopy/hosts-manager-extension&type=Date)](https://www.star-history.com/#ccpopy/hosts-manager-extension&Date)
-
-## 📮 联系作者
-
+### Contact
 - GitHub: [@ccpopy](https://github.com/ccpopy)
-- Issues: [提交问题](https://github.com/ccpopy/hosts-manager-extension/issues)
+- Issues: [Submit an issue](https://github.com/ccpopy/hosts-manager-extension/issues)
+
+---
+
+<a id="zh-cn"></a>
+
+## 简体中文
+
+### 简介
+Hosts Manager 是一款用于按分组管理 hosts 映射的浏览器扩展，可一键启用/禁用分组，并支持内置 Socket 代理。所有数据仅存储在本地浏览器。
+
+### 功能特点
+- 分组管理：按项目或环境组织规则
+- 一键切换：启用/禁用分组无需重复编辑
+- 批量导入：支持标准 hosts 格式
+- Socket 代理：内置代理配置与白名单
+- 本地存储：数据不出本地
+- 现代界面：基于 Manifest V3 的 Chrome/Edge 扩展
+
+### 界面截图
+![主界面](screenshots/hosts.png)
+<p align="center">主界面 - 分组管理</p>
+
+### 安装方法
+- 从 Release 安装（推荐）
+  1. 前往 [Releases](../../releases) 下载最新 `hosts-manager.zip`
+  2. 解压后在 `chrome://extensions/` 中开启“开发者模式”，点击“加载已解压的扩展程序”
+  3. 选择解压后的目录
+- 使用 CRX 文件
+  1. 下载 `hosts-manager.crx`
+  2. 拖拽到扩展管理页并确认安装
+- 从源码加载
+  ```bash
+  git clone https://github.com/ccpopy/hosts-manager-extension.git
+  cd hosts-manager-extension
+  ```
+  在扩展管理页选择 `host` 目录加载。
+
+### 使用说明
+- 新建分组并添加规则（格式 `IP 域名`）
+- 开关分组以批量启用/禁用内部规则
+- 右键规则可编辑或删除
+- 批量导入示例：
+  ```
+  # 开发环境
+  192.168.1.100 dev.example.com
+  192.168.1.101 api.example.com
+  ```
+- Socket 代理：设置页 → Socket 代理，填写服务器、端口、协议、认证和白名单后保存。
+
+### 技术栈
+- 原生 JavaScript + Chrome/Edge Extensions API (Manifest V3)
+- GitHub Actions 自动构建发布
+
+### 项目结构
+```
+host/
+├── background.js              # 后台脚本：代理/PAC 与 hosts 映射
+├── css/                       # 样式文件
+├── images/                    # 图标资源
+├── js/                        # 逻辑代码（组件、页面、服务、工具）
+├── manifest.json              # 扩展清单 (MV3)
+├── page.html                  # 设置页面
+└── popup.html                 # 弹出窗口
+```
+
+### 开发与发布
+- 本地开发：修改代码后在扩展管理页点击“重新加载”。
+- 发布：执行 `git tag vX.Y.Z` 并推送，GitHub Actions 会自动打包 ZIP/CRX 并创建 Release。
+
+### 注意事项
+- 需 Chrome/Edge 88+；代理权限可能与其他代理扩展冲突
+- 建议定期备份配置
+
+### 待办
+- [ ] 国际化 UI 切换
+- [x] 搜索功能
+- [x] 导出/导入分组
+- [ ] 大量规则下的性能优化
+
+### 许可证
+MIT 许可证，详见 `LICENSE`。
+
+### 联系作者
+- GitHub: [@ccpopy](https://github.com/ccpopy)
+- Issues: [提交 Issue](https://github.com/ccpopy/hosts-manager-extension/issues)
 
 ---
 
 <p align="center">
-  <strong>如果觉得这个项目对你有帮助，请给个 ⭐ Star 支持一下！</strong>
+  <strong>If this project helps you, please consider giving it a ⭐</strong>
 </p>
