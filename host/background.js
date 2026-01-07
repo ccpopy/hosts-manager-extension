@@ -101,17 +101,18 @@ async function loadInitialState() {
     const data = await getStorageData(['hostsGroups', 'activeGroups', 'socketProxy']);
 
     state.activeGroups = data.activeGroups || [];
-    const hasSocketProxy = isSocketProxyConfigured(data.socketProxy);
 
     if (!data.hostsGroups) {
       await createDefaultGroups();
       return;
     }
 
-    if (hasSocketProxy || (state.activeGroups.length > 0)) {
-      await updateActiveHostsMap();
-    } else if (data.hostsGroups.length > 0) {
+    // Only activate all groups on first install (when activeGroups is undefined)
+    // If activeGroups is an empty array [], it means user intentionally disabled all groups
+    if (data.activeGroups === undefined && data.hostsGroups.length > 0) {
       await activateAllGroups(data.hostsGroups);
+    } else {
+      await updateActiveHostsMap();
     }
   } catch (error) {
     console.error('Failed to load initial state:', error);

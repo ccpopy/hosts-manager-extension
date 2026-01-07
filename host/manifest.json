@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hosts Manager",
-  "version": "1.0.7",
+  "version": "1.0.7.1",
   "description": "轻松管理本地Hosts映射，支持分组切换和Socket代理，让开发测试更高效。",
   "permissions": [
     "proxy",
