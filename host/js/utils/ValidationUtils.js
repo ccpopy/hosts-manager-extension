@@ -56,10 +56,18 @@ export function isValidIpv6 (ip) {
   let ipPart = ip;
   let portPart = null;
 
-  if (ip.startsWith('[') && ip.includes(']:')) {
-    const endBracket = ip.indexOf(']:');
+  if (ip.startsWith('[')) {
+    const endBracket = ip.indexOf(']');
+    if (endBracket === -1) return false;
     ipPart = ip.substring(1, endBracket);
-    portPart = ip.substring(endBracket + 2);
+    const rest = ip.substring(endBracket + 1);
+    if (rest) {
+      if (!rest.startsWith(':')) return false;
+      portPart = rest.substring(1);
+      if (!portPart) return false;
+    }
+  } else if (ip.includes(']')) {
+    return false;
   }
 
   // IPv6 地址验证正则
@@ -180,7 +188,7 @@ export function isValidPort (port) {
  * @returns {boolean} - 是否合法
  */
 export function isValidHostRule (ip, domain) {
-  return isValidIp(ip) && isValidDomain(domain);
+  return isValidIpAddress(ip) && isValidDomain(domain);
 }
 
 /**
@@ -397,20 +405,25 @@ export function isIpInRange (ip, networkMask) {
  * @returns {string|null} - 格式化后的IP或null（如果无效）
  */
 export function formatIp (ip) {
-  if (!isValidIp(ip)) return null;
+  if (!ip || typeof ip !== 'string') return null;
 
-  // 分离IP和端口
-  if (ip.includes(':')) {
-    const parts = ip.split(':');
-    const ipPart = parts[0].split('.')
-      .map(part => parseInt(part, 10).toString())
-      .join('.');
-    return `${ipPart}:${parts[1]}`;
+  if (isValidIpv6(ip)) {
+    const { ip: ipPart, port } = parseIpAndPort(ip);
+    if (!ipPart) return null;
+    const normalized = ipPart.toLowerCase();
+    return port !== null ? `[${normalized}]:${port}` : normalized;
   }
 
-  return ip.split('.')
+  if (!isValidIp(ip)) return null;
+
+  const { ip: ipPart, port } = parseIpAndPort(ip);
+  if (!ipPart) return null;
+
+  const normalized = ipPart.split('.')
     .map(part => parseInt(part, 10).toString())
     .join('.');
+
+  return port !== null ? `${normalized}:${port}` : normalized;
 }
 
 /**
@@ -454,16 +467,51 @@ export function parseIpAndPort (ipWithPort) {
     return { ip: null, port: null };
   }
 
-  if (ipWithPort.includes(':')) {
-    const parts = ipWithPort.split(':');
-    if (parts.length === 2) {
-      const port = parseInt(parts[1], 10);
-      return {
-        ip: parts[0],
-        port: isNaN(port) ? null : port
-      };
-    }
+  const value = ipWithPort.trim();
+  if (!value) {
+    return { ip: null, port: null };
   }
 
-  return { ip: ipWithPort, port: null };
+  if (value.startsWith('[')) {
+    const endBracket = value.indexOf(']');
+    if (endBracket === -1) {
+      return { ip: null, port: null };
+    }
+
+    const ip = value.substring(1, endBracket);
+    if (!ip) {
+      return { ip: null, port: null };
+    }
+
+    const rest = value.substring(endBracket + 1);
+    if (!rest) {
+      return { ip, port: null };
+    }
+
+    if (!rest.startsWith(':') || rest.length === 1) {
+      return { ip: null, port: null };
+    }
+
+    const port = parseInt(rest.substring(1), 10);
+    return {
+      ip,
+      port: isNaN(port) ? null : port
+    };
+  }
+
+  if (value.includes(']')) {
+    return { ip: null, port: null };
+  }
+
+  const firstColon = value.indexOf(':');
+  const lastColon = value.lastIndexOf(':');
+  if (firstColon !== -1 && firstColon === lastColon) {
+    const port = parseInt(value.substring(lastColon + 1), 10);
+    return {
+      ip: value.substring(0, lastColon),
+      port: isNaN(port) ? null : port
+    };
+  }
+
+  return { ip: value, port: null };
 }

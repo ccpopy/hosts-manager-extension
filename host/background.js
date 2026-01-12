@@ -492,6 +492,18 @@ function generatePacScript(hostsMapping, socketProxy) {
   return buildPacScriptContent(pacComponents);
 }
 
+// Build proxy host for IPv6 literals
+function formatProxyHost(host) {
+  if (!host) return '';
+  if (host.includes(':')) {
+    if (host.startsWith('[') && host.endsWith(']')) {
+      return host;
+    }
+    return `[${host}]`;
+  }
+  return host;
+}
+
 // Build proxy string based on configuration
 function buildProxyString(socketProxy) {
   if (!socketProxy || !socketProxy.enabled || !socketProxy.host || !socketProxy.port) {
@@ -500,23 +512,24 @@ function buildProxyString(socketProxy) {
 
   const { protocol = 'SOCKS5', host, port, auth } = socketProxy;
   const authString = buildAuthString(auth);
+  const proxyHost = formatProxyHost(host);
 
   switch (protocol) {
     case 'HTTP':
     case 'HTTPS':
       return authString
-        ? `PROXY ${authString}@${host}:${port}`
-        : `PROXY ${host}:${port}`;
+        ? `PROXY ${authString}@${proxyHost}:${port}`
+        : `PROXY ${proxyHost}:${port}`;
     case 'SOCKS4':
-      return `SOCKS4 ${host}:${port}`;
+      return `SOCKS4 ${proxyHost}:${port}`;
     case 'SOCKS':
       return authString
-        ? `SOCKS5 ${authString}@${host}:${port}; SOCKS ${host}:${port}`
-        : `SOCKS5 ${host}:${port}; SOCKS ${host}:${port}`;
+        ? `SOCKS5 ${authString}@${proxyHost}:${port}; SOCKS ${proxyHost}:${port}`
+        : `SOCKS5 ${proxyHost}:${port}; SOCKS ${proxyHost}:${port}`;
     default:
       return authString
-        ? `SOCKS5 ${authString}@${host}:${port}`
-        : `SOCKS5 ${host}:${port}`;
+        ? `SOCKS5 ${authString}@${proxyHost}:${port}`
+        : `SOCKS5 ${proxyHost}:${port}`;
   }
 }
 
@@ -546,7 +559,7 @@ function normalizeBypassRule(rule) {
   }
 
   const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}(?::\d{1,5})?$/;
-  const ipv6Pattern = /^\[?[0-9a-f:]+\]?$/i;
+  const ipv6Pattern = /^(?:\[[0-9a-f:]+\](?::\d{1,5})?|[0-9a-f:]+)$/i;
   const domainPattern = /^([a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
   const singleLabelPattern = /^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$/;
 
@@ -621,14 +634,40 @@ function buildPacScriptContent({ hostsJson, socksEnabled, proxyString, bypassExa
       return false;
     }
 
-    var domainPart = host;
-    var port = "80";
+    function splitHostAndPort(value, defaultPort) {
+      var hostValue = value;
+      var portValue = defaultPort;
+      var isIpv6 = false;
 
-    var colonPos = host.indexOf(":");
-    if (colonPos !== -1) {
-      domainPart = host.substring(0, colonPos);
-      port = host.substring(colonPos + 1);
+      if (value && value.charAt(0) === '[') {
+        var closeBracket = value.indexOf(']');
+        if (closeBracket !== -1) {
+          hostValue = value.substring(1, closeBracket);
+          isIpv6 = true;
+          if (value.length > closeBracket + 1 && value.charAt(closeBracket + 1) === ':') {
+            portValue = value.substring(closeBracket + 2);
+          }
+        }
+        return { host: hostValue, port: portValue, ipv6: isIpv6 };
+      }
+
+      var firstColon = value.indexOf(':');
+      var lastColon = value.lastIndexOf(':');
+      if (firstColon !== -1 && firstColon === lastColon) {
+        hostValue = value.substring(0, lastColon);
+        portValue = value.substring(lastColon + 1);
+      }
+
+      if (hostValue.indexOf(':') !== -1) {
+        isIpv6 = true;
+      }
+
+      return { host: hostValue, port: portValue, ipv6: isIpv6 };
     }
+
+    var hostInfo = splitHostAndPort(host, "80");
+    var domainPart = hostInfo.host;
+    var port = hostInfo.port;
 
     domainPart = domainPart.toLowerCase();
 
@@ -644,13 +683,12 @@ function buildPacScriptContent({ hostsJson, socksEnabled, proxyString, bypassExa
     }
 
     if (hostsMapping[domainPart]) {
-      var mappedIP = hostsMapping[domainPart];
-      var mappedPort = port;
+      var mappingInfo = splitHostAndPort(hostsMapping[domainPart], port);
+      var mappedIP = mappingInfo.host;
+      var mappedPort = mappingInfo.port;
 
-      if (mappedIP.indexOf(':') !== -1) {
-        var parts = mappedIP.split(':');
-        mappedIP = parts[0];
-        mappedPort = parts[1];
+      if (mappingInfo.ipv6) {
+        mappedIP = '[' + mappedIP + ']';
       }
 
       if (url.indexOf('https://') === 0) {

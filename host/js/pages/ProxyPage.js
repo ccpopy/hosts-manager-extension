@@ -2,7 +2,7 @@ import StateService from '../services/StateService.js';
 import ProxyService from '../services/ProxyService.js';
 import { createNotice } from '../components/Notice.js';
 import { Message } from '../utils/MessageUtils.js';
-import { isValidIp, isValidDomain, isValidPort } from '../utils/ValidationUtils.js';
+import { isValidIpAddress, isValidDomain, isValidPort } from '../utils/ValidationUtils.js';
 
 export default class ProxyPage {
   /**
@@ -470,7 +470,7 @@ export default class ProxyPage {
 
     switch (field) {
       case 'host':
-        if (value && !isValidIp(value) && !isValidDomain(value)) {
+        if (value && !isValidIpAddress(value) && !isValidDomain(value)) {
           isValid = false;
           errorMessage = '请输入有效的IP地址或域名';
         }
@@ -534,7 +534,7 @@ export default class ProxyPage {
       return;
     }
 
-    if (!isValidIp(host) && !isValidDomain(host)) {
+    if (!isValidIpAddress(host) && !isValidDomain(host)) {
       Message.error('代理主机格式无效');
       return;
     }

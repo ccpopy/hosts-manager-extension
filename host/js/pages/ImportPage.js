@@ -2,7 +2,7 @@ import StateService from '../services/StateService.js';
 import ProxyService from '../services/ProxyService.js';
 import { createNotice } from '../components/Notice.js';
 import { Message } from '../utils/MessageUtils.js';
-import { parseBatchRules, isValidIp, isValidDomain } from '../utils/ValidationUtils.js';
+import { parseBatchRules, isValidIpAddress, isValidDomain } from '../utils/ValidationUtils.js';
 
 export default class ImportPage {
   constructor(container) {
@@ -128,7 +128,7 @@ export default class ImportPage {
 
     const importInstructions = document.createElement('p');
     importInstructions.className = 'instruction';
-    importInstructions.textContent = '在下面输入 hosts 规则，每行一条。格式为：';
+    importInstructions.textContent = '在下面输入 hosts 规则，每行一条。格式为 (IPv6端口使用 [IPv6]:端口)：';
     this.textImportArea.appendChild(importInstructions);
 
     const formatExample = document.createElement('div');
@@ -1295,7 +1295,7 @@ export default class ImportPage {
     let skipped = 0;
 
     for (const host of newHosts) {
-      if (isValidIp(host.ip) && isValidDomain(host.domain)) {
+      if (isValidIpAddress(host.ip) && isValidDomain(host.domain)) {
         const newHost = {
           id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
           ip: host.ip,

@@ -6,7 +6,7 @@ import StateService from '../services/StateService.js';
 import SearchService from '../services/SearchService.js';
 import Modal from './Modal.js';
 import { Message } from '../utils/MessageUtils.js';
-import { isValidIp, isValidDomain, normalizeHostRule, parseHostRule } from '../utils/ValidationUtils.js';
+import { isValidIpAddress, isValidDomain, normalizeHostRule, parseHostRule } from '../utils/ValidationUtils.js';
 import { debounce } from '../utils/PerformanceUtils.js';
 
 // 节流控制常量
@@ -34,7 +34,7 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
   }
 
   // 验证主机规则的完整性
-  if (!isValidIp(host.ip) || !isValidDomain(host.domain)) {
+  if (!isValidIpAddress(host.ip) || !isValidDomain(host.domain)) {
     console.warn('主机规则验证失败:', host);
     const warningEl = document.createElement('div');
     warningEl.className = 'host-item warning';
@@ -72,7 +72,7 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
     }
 
     // IP地址验证
-    if (host.ip && !isValidIp(host.ip)) {
+    if (host.ip && !isValidIpAddress(host.ip)) {
       ipSpan.style.color = 'var(--error-color)';
       ipSpan.title = 'IP地址格式无效';
     }
@@ -312,7 +312,7 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   // 添加实时验证
   ipInput.addEventListener('input', () => {
     const value = ipInput.value.trim();
-    if (value && !isValidIp(value)) {
+    if (value && !isValidIpAddress(value)) {
       ipInput.style.borderColor = 'var(--error-color)';
       ipInput.title = 'IP地址格式无效';
     } else {
@@ -364,7 +364,7 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
       return;
     }
 
-    if (!isValidIp(newIp)) {
+    if (!isValidIpAddress(newIp)) {
       Message.error('IP地址格式无效');
       ipInput.focus();
       return;
@@ -544,7 +544,7 @@ export function createAddHostForm (groupId, container, onAdd) {
 
   const ruleLabel = document.createElement('div');
   ruleLabel.className = 'instruction';
-  ruleLabel.textContent = '输入完整规则:';
+  ruleLabel.textContent = '输入完整规则 (IPv6端口使用 [IPv6]:端口):';
   fullRuleDiv.appendChild(ruleLabel);
 
   const inputBox = document.createElement('div');
@@ -561,9 +561,9 @@ export function createAddHostForm (groupId, container, onAdd) {
     const value = ruleInput.value.trim();
     if (value) {
       const parsed = parseHostRule(value);
-      if (!parsed || !isValidIp(parsed.ip) || !isValidDomain(parsed.domain)) {
+      if (!parsed || !isValidIpAddress(parsed.ip) || !isValidDomain(parsed.domain)) {
         ruleInput.style.borderColor = 'var(--error-color)';
-        ruleInput.title = '规则格式无效，请使用格式：IP地址 域名';
+        ruleInput.title = '规则格式无效，请使用格式：IP地址 域名 (IPv6端口使用 [IPv6]:端口)';
       } else {
         ruleInput.style.borderColor = 'var(--success-color)';
         ruleInput.title = '规则格式正确';
@@ -629,7 +629,7 @@ export function createAddHostForm (groupId, container, onAdd) {
 
   const separateTitle = document.createElement('div');
   separateTitle.className = 'instruction';
-  separateTitle.textContent = '或者分别输入:';
+  separateTitle.textContent = '或者分别输入 (IPv6端口使用 [IPv6]:端口):';
   addHostForm.appendChild(separateTitle);
 
   const formRow = document.createElement('div');
@@ -643,7 +643,7 @@ export function createAddHostForm (groupId, container, onAdd) {
   // 添加实时验证
   ipInput.addEventListener('input', () => {
     const value = ipInput.value.trim();
-    if (value && !isValidIp(value)) {
+    if (value && !isValidIpAddress(value)) {
       ipInput.style.borderColor = 'var(--error-color)';
       ipInput.title = 'IP地址格式无效';
     } else if (value) {
@@ -699,7 +699,7 @@ export function createAddHostForm (groupId, container, onAdd) {
       return;
     }
 
-    if (!isValidIp(ip)) {
+    if (!isValidIpAddress(ip)) {
       Message.error('IP地址格式无效');
       ipInput.focus();
       return;
@@ -767,7 +767,7 @@ export function createAddHostForm (groupId, container, onAdd) {
   ipInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
       // 如果IP有效，聚焦到域名
-      if (isValidIp(ipInput.value.trim())) {
+      if (isValidIpAddress(ipInput.value.trim())) {
         domainInput.focus();
       } else {
         // 否则尝试添加（会显示错误消息）
@@ -801,7 +801,7 @@ async function addRule (groupId, ruleText) {
 
   const { ip, domain } = parsedRule;
 
-  if (!isValidIp(ip)) {
+  if (!isValidIpAddress(ip)) {
     return { success: false, message: 'IP地址格式无效' };
   }
 

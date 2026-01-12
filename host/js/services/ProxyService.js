@@ -4,7 +4,7 @@
  */
 import {
   parseHostRule,
-  isValidIp,
+  isValidIpAddress,
   isValidDomain,
   normalizeHostRule,
   normalizeBypassRules as normalizeBypassRulesUtil,
@@ -178,7 +178,7 @@ export default class ProxyService {
         const { ip, domain } = parsedRule;
 
         // 验证IP和域名格式
-        if (!isValidIp(ip)) {
+        if (!isValidIpAddress(ip)) {
           result.skipped++;
           result.invalidRules.push({ line, index: i + 1, reason: 'IP地址格式无效' });
           continue;
@@ -380,7 +380,7 @@ export default class ProxyService {
 
       const { ip, domain } = parsedRule;
 
-      if (!isValidIp(ip)) {
+      if (!isValidIpAddress(ip)) {
         result.invalid++;
         result.errors.push({
           line: lineNumber,
