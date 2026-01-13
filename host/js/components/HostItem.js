@@ -62,14 +62,20 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
 
     // IP地址显示
     const ipSpan = document.createElement('span');
-    ipSpan.className = 'host-ip';
+    ipSpan.className = 'host-ip tip';
+    ipSpan.dataset.tip = host.ip;
+
+    const ipText = document.createElement('span');
+    ipText.className = 'tip-text';
 
     // 如果有搜索关键字，则高亮显示
     if (searchKeyword) {
-      ipSpan.innerHTML = SearchService.highlightText(host.ip, searchKeyword);
+      ipText.innerHTML = SearchService.highlightText(host.ip, searchKeyword);
     } else {
-      ipSpan.textContent = host.ip;
+      ipText.textContent = host.ip;
     }
+
+    ipSpan.appendChild(ipText);
 
     // IP地址验证
     if (host.ip && !isValidIpAddress(host.ip)) {
@@ -81,14 +87,20 @@ export function createHostElement (groupId, host, onUpdate = null, searchKeyword
 
     // 域名显示
     const domainSpan = document.createElement('span');
-    domainSpan.className = 'host-domain';
+    domainSpan.className = 'host-domain tip';
+    domainSpan.dataset.tip = host.domain;
+
+    const domainText = document.createElement('span');
+    domainText.className = 'tip-text';
 
     // 如果有搜索关键字，则高亮显示
     if (searchKeyword) {
-      domainSpan.innerHTML = SearchService.highlightText(host.domain, searchKeyword);
+      domainText.innerHTML = SearchService.highlightText(host.domain, searchKeyword);
     } else {
-      domainSpan.textContent = host.domain;
+      domainText.textContent = host.domain;
     }
+
+    domainSpan.appendChild(domainText);
 
     // 域名验证
     if (host.domain && !isValidDomain(host.domain)) {
@@ -306,7 +318,9 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
   ipInput.type = 'text';
   ipInput.value = currentIp;
   ipInput.placeholder = 'IP 地址';
-  ipInput.style.flex = '0 0 140px';
+  ipInput.style.flex = '0 0 200px';
+  ipInput.classList.add('host-ip-input');
+  ipInput.title = currentIp || '';
   ipInput.setAttribute('aria-label', 'IP 地址');
 
   // 添加实时验证
@@ -315,6 +329,9 @@ function createHostEditForm (groupId, hostId, currentIp, currentDomain, hostItem
     if (value && !isValidIpAddress(value)) {
       ipInput.style.borderColor = 'var(--error-color)';
       ipInput.title = 'IP地址格式无效';
+    } else if (value) {
+      ipInput.style.borderColor = '';
+      ipInput.title = value;
     } else {
       ipInput.style.borderColor = '';
       ipInput.title = '';
@@ -638,6 +655,7 @@ export function createAddHostForm (groupId, container, onAdd) {
   const ipInput = document.createElement('input');
   ipInput.type = 'text';
   ipInput.placeholder = 'IP 地址';
+  ipInput.classList.add('host-ip-input');
   ipInput.setAttribute('aria-label', 'IP 地址');
 
   // 添加实时验证
@@ -648,7 +666,7 @@ export function createAddHostForm (groupId, container, onAdd) {
       ipInput.title = 'IP地址格式无效';
     } else if (value) {
       ipInput.style.borderColor = 'var(--success-color)';
-      ipInput.title = 'IP地址格式正确';
+      ipInput.title = value;
     } else {
       ipInput.style.borderColor = '';
       ipInput.title = '';
@@ -679,7 +697,7 @@ export function createAddHostForm (groupId, container, onAdd) {
   const ipContainer = document.createElement('div');
   ipContainer.style.display = 'flex';
   ipContainer.style.alignItems = 'center';
-  ipContainer.style.flex = '0 0 140px';
+  ipContainer.style.flex = '0 0 200px';
   ipContainer.appendChild(ipInput);
 
   // 域名输入容器

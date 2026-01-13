@@ -273,7 +273,11 @@ body {
 }
 
 .host-ip {
-  width: 140px;
+  width: 200px;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  min-width: 0;
   font-family: "SF Mono", Monaco, "Cascadia Mono", "Roboto Mono", monospace;
   font-size: 13px;
   color: var(--gray-800);
@@ -282,9 +286,73 @@ body {
 
 .host-domain {
   flex: 1;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  min-width: 0;
   font-family: "SF Mono", Monaco, "Cascadia Mono", "Roboto Mono", monospace;
   font-size: 13px;
   color: var(--gray-700);
+}
+
+.tip {
+  position: relative;
+  min-width: 0;
+}
+
+.tip .tip-text {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tip[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  max-width: 420px;
+  padding: 6px 8px;
+  border-radius: var(--rounded);
+  background: rgba(17, 24, 39, 0.9);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-all;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 20;
+}
+
+.tip[data-tip]::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: calc(100% + 2px);
+  border-width: 0 6px 6px 6px;
+  border-style: solid;
+  border-color: transparent transparent rgba(17, 24, 39, 0.9) transparent;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 19;
+}
+
+.tip[data-tip]:hover::after,
+.tip[data-tip]:hover::before {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.host-ip-input {
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 /* Forms */
