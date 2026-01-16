@@ -20,9 +20,11 @@
 ## English
 
 ### What is this?
+
 Hosts Manager Extension lets you organize hosts mappings into reusable groups, toggle them with one click, and optionally route traffic through a socket proxy. All data stays local to your browser.
 
 ### Features
+
 - Grouped rule management for different projects or environments
 - One-click enable/disable for groups without re-editing
 - Bulk import from files or clipboard in standard hosts format
@@ -31,10 +33,13 @@ Hosts Manager Extension lets you organize hosts mappings into reusable groups, t
 - Clean, modern UI built for Chrome/Edge Manifest V3
 
 ### Screenshots
+
 ![Main interface](screenshots/hosts.png)
+
 <p align="center">Main interface with grouped hosts</p>
 
 ### Installation
+
 - From Releases (recommended)
   1. Download the latest `hosts-manager.zip` from [Releases](../../releases).
   2. Extract it locally.
@@ -51,6 +56,7 @@ Hosts Manager Extension lets you organize hosts mappings into reusable groups, t
   Then load the `host` directory via "Load unpacked" in Chrome/Edge.
 
 ### Usage
+
 - Create a group and add rules (`IP domain`) under it.
 - Toggle a group to enable/disable all rules inside it.
 - Right-click a rule to edit or delete.
@@ -63,10 +69,12 @@ Hosts Manager Extension lets you organize hosts mappings into reusable groups, t
 - Socket proxy setup: open Settings → Socket Proxy, enter server, port, protocol, optional auth, and bypass list, then save.
 
 ### Tech Stack
+
 - Vanilla JavaScript with Chrome/Edge Extensions API (Manifest V3)
 - GitHub Actions for packaging releases
 
 ### Project Structure
+
 ```
 host/
 ├── background.js              # Service worker: proxy/PAC and hosts mapping
@@ -88,27 +96,54 @@ host/
 ```
 
 ### Development
+
 - Local dev: edit code, then click "Reload" in the extensions page after changes.
 - Release: tag with `git tag vX.Y.Z && git push origin vX.Y.Z`; GitHub Actions builds ZIP/CRX and publishes a Release.
 
 ### Notes
+
 - Requires Chrome/Edge 88+ (Manifest V3 support).
 - Proxy features need proxy permissions and may conflict with other proxy extensions.
 - HTTPS host overrides are not reliable because browsers validate TLS certificates against the original domain; use a proxy that both resolves the domain and presents a valid/accepted certificate if you need HTTPS mappings.
 - Back up your configuration regularly.
 
 ### Roadmap
+
 - [ ] Internationalization toggle in UI
 - [x] Search within hosts rules
 - [x] Export/import groups
 - [ ] Performance optimizations for very large rule sets
 
 ### License
+
 MIT License – see `LICENSE`.
 
+### Special Thanks
+
+Thanks to all contributors who helped improve this project through testing, feedback, and pull requests:
+
+| Contributor                                | Contribution             |
+| ------------------------------------------ | ------------------------ |
+| [@Jaffe2718](https://github.com/Jaffe2718) | Issue feedback & Testing |
+
+> Want to be listed here? Contributions via [issues](https://github.com/ccpopy/hosts-manager-extension/issues) or [pull requests](https://github.com/ccpopy/hosts-manager-extension/pulls) are always welcome!
+
 ### Contact
+
 - GitHub: [@ccpopy](https://github.com/ccpopy)
 - Issues: [Submit an issue](https://github.com/ccpopy/hosts-manager-extension/issues)
+
+---
+
+### Star History
+
+<a href="https://star-history.com/#ccpopy/hosts-manager-extension&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ccpopy/hosts-manager-extension&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ccpopy/hosts-manager-extension&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ccpopy/hosts-manager-extension&type=Date" />
+ </picture>
+</a>
 
 ---
 
