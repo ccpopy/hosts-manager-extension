@@ -152,6 +152,10 @@ export default class ProxyService {
 
       const group = hostsGroups[groupIndex];
       const newHosts = [];
+      // Track newly-created rules inside this batch so duplicate lines can be
+      // skipped or updated consistently before the batch is persisted.
+      const seenInBatch = new Map();
+      let hasChanges = false;
 
       // 分割规则行
       const lines = rulesText.split('\n');
@@ -198,34 +202,39 @@ export default class ProxyService {
           continue;
         }
 
-        // 检查是否已存在
-        const exists = group.hosts.some(h => h.ip === normalized.ip && h.domain === normalized.domain);
+        // 检查是否已存在（包含本批次内的重复行）
+        const batchKey = `${normalized.ip}|${normalized.domain}`;
+        const existingHost = group.hosts.find(h => h.ip === normalized.ip && h.domain === normalized.domain);
+        const pendingHost = seenInBatch.get(batchKey);
+        const exists = existingHost || pendingHost;
 
         if (exists) {
           if (settings.skipDuplicates) {
             result.skipped++;
             result.duplicates.push({ ip: normalized.ip, domain: normalized.domain, index: i + 1 });
           } else {
-            // 找到重复规则并更新
-            const hostIndex = group.hosts.findIndex(h => h.ip === normalized.ip && h.domain === normalized.domain);
-            if (hostIndex !== -1) {
-              group.hosts[hostIndex].enabled = settings.enableRules;
-              result.imported++;
-            }
+            // 找到重复规则并更新（包括本批次刚创建、尚未落盘的规则）
+            const targetHost = existingHost || pendingHost;
+            targetHost.enabled = settings.enableRules;
+            hasChanges = true;
+            result.imported++;
           }
         } else {
           // 创建新规则
-          newHosts.push({
+          const newHost = {
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
             ...normalized,
             enabled: settings.enableRules
-          });
+          };
+          newHosts.push(newHost);
+          seenInBatch.set(batchKey, newHost);
+          hasChanges = true;
           result.imported++;
         }
       }
 
-      // 添加新的hosts条目
-      if (newHosts.length > 0) {
+      // 保存新增规则或对现有重复规则的状态更新
+      if (hasChanges) {
         group.hosts.push(...newHosts);
         await this.saveHostsGroups(hostsGroups);
 

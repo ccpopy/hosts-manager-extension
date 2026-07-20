@@ -5,6 +5,7 @@ import { createAddGroupForm } from '../components/GroupForm.js';
 import { createHostElement } from '../components/HostItem.js';
 import SearchBar from '../components/SearchBar.js';
 import { debounce } from '../utils/PerformanceUtils.js';
+import { Message } from '../utils/MessageUtils.js';
 
 // 虚拟化列表配置
 const VIRTUALIZATION = {
@@ -322,6 +323,11 @@ export default class HostsPage {
     this.container.innerHTML = '';
 
     // 标题
+    const eyebrow = document.createElement('div');
+    eyebrow.className = 'eyebrow';
+    eyebrow.textContent = 'hosts.d / groups';
+    this.container.appendChild(eyebrow);
+
     const hostsTitle = document.createElement('h2');
     hostsTitle.className = 'page-title';
     hostsTitle.textContent = 'Hosts 配置管理';
@@ -329,7 +335,7 @@ export default class HostsPage {
 
     // 提示信息
     const notice = createNotice(
-      '可以创建多个分组，每个分组可以独立启用或禁用。注意：由于浏览器安全限制，扩展程序无法处理https网站的hosts映射（SSL证书验证会失败）。如需https网站的hosts映射，请配置系统hosts文件或使用Socket代理（通过第三方软件处理SSL证书问题）。',
+      '分组可独立启用或禁用，规则支持 IP+端口 与通配符域名（*.example.com）。受浏览器安全限制，https 网站的映射无法直接生效（证书校验会失败），可配置系统 hosts 或让 Socket 代理接管。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -717,6 +723,11 @@ export default class HostsPage {
         if (content) {
           content.style.display = 'block';
 
+          const expandIcon = groupItem.querySelector('.expand-icon');
+          if (expandIcon) {
+            expandIcon.classList.add('expanded');
+          }
+
           // 展开时检查是否需要更新主机列表
           const hostElementsContainer = content.querySelector('.hosts-container');
           if (hostElementsContainer && isModified) {
@@ -796,7 +807,7 @@ export default class HostsPage {
       // 更新主机数量标签
       const groupElement = container.closest('.group-item');
       if (groupElement) {
-        const hostsCountTag = groupElement.querySelector('.group-header .status-tag:nth-child(3)');
+        const hostsCountTag = groupElement.querySelector('.hosts-count-tag');
         if (hostsCountTag) {
           const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
           const enabledCount = Array.isArray(group.hosts) ? group.hosts.filter(h => h.enabled).length : 0;
@@ -900,12 +911,22 @@ export default class HostsPage {
     // 如果需要显示添加分组表单，则创建并添加
     if (show) {
       const addGroupForm = createAddGroupForm(
-        async (newGroup) => {
-          // 添加分组成功后的回调
+        async ({ name, active }) => {
+          // 表单只收集输入，这里统一负责写入，避免重复添加
           try {
-            const success = await StateService.addGroup(newGroup, true);
+            const newGroup = {
+              id: Date.now().toString(),
+              name,
+              hosts: [],
+              enabled: true
+            };
+
+            const success = await StateService.addGroup(newGroup, active);
             if (success) {
               await StateService.setShowAddGroupForm(false);
+              Message.success(`分组 "${name}" 已创建`);
+            } else {
+              Message.error('分组名称已存在，请换一个名称');
             }
           } catch (error) {
             console.error('添加分组失败:', error);
@@ -1231,6 +1252,10 @@ export default class HostsPage {
             const content = newGroupElement.querySelector('.group-content');
             if (content) {
               content.style.display = 'block';
+            }
+            const expandIcon = newGroupElement.querySelector('.expand-icon');
+            if (expandIcon) {
+              expandIcon.classList.add('expanded');
             }
           }
 

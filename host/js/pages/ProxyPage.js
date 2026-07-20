@@ -57,6 +57,11 @@ export default class ProxyPage {
     this.container.innerHTML = '';
 
     // 标题
+    const eyebrow = document.createElement('div');
+    eyebrow.className = 'eyebrow';
+    eyebrow.textContent = 'hosts.d / proxy';
+    this.container.appendChild(eyebrow);
+
     const proxyTitle = document.createElement('h2');
     proxyTitle.className = 'page-title';
     proxyTitle.textContent = 'Socket 代理设置';
@@ -235,6 +240,12 @@ export default class ProxyPage {
     authTitle.className = 'section-title';
     authTitle.textContent = '认证设置';
     authSection.appendChild(authTitle);
+
+    // 认证能力说明：浏览器层面的限制
+    const authHint = document.createElement('p');
+    authHint.className = 'field-hint';
+    authHint.textContent = '账号密码用于自动应答 HTTP/HTTPS 代理的认证质询。受 Chrome 限制，SOCKS 代理无法进行认证，如代理需要认证请改用 HTTP/HTTPS 协议。';
+    authSection.appendChild(authHint);
 
     // 启用认证切换
     const authEnableGroup = document.createElement('div');

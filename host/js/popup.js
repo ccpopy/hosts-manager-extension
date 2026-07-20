@@ -1,6 +1,6 @@
 /**
  * Popup 页面脚本
- * 使用 MessageBridge 处理与 Service Worker 的通信
+ * 展示当前页面的映射解析结果（issue #8）、分组开关与 Socket 代理状态
  */
 
 // 导入消息桥接工具
@@ -10,6 +10,17 @@ import('../js/utils/MessageBridge.js').then(module => {
   console.error('Failed to load MessageBridge:', error);
 });
 
+// 用于存储分组展开状态
+const expandedGroups = new Set();
+
+// 当前标签页信息
+let currentTab = { hostname: null, valid: false };
+
+// 操作状态管理
+const operationState = {
+  updating: false
+};
+
 document.addEventListener('DOMContentLoaded', async () => {
   // 打开设置页面
   document.getElementById('open-settings').addEventListener('click', () => {
@@ -17,38 +28,221 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.close();
   });
 
+  // 底部版本号
+  try {
+    const versionEl = document.getElementById('popup-version');
+    if (versionEl) {
+      versionEl.textContent = `v${chrome.runtime.getManifest().version}`;
+    }
+  } catch (error) {
+    // 保留 HTML 中的默认版本号
+  }
+
+  // 阻止代理开关的点击冒泡（只绑定一次）
+  document.getElementById('proxy-toggle').addEventListener('click', (e) => {
+    e.stopPropagation();
+  });
+
   // 加载数据
+  loadCurrentTab();
   loadGroups();
   loadProxyStatus();
 
   // 监听存储变化
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    // 如果是 activeGroups 变化，重新加载整个列表
-    if (changes.activeGroups) {
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.activeGroups || changes.hostsGroups) {
       loadGroups();
-    }
-    // 如果是 hostsGroups 变化，可能是单个规则的状态变化
-    else if (changes.hostsGroups && !changes.activeGroups) {
-      // 不重新加载整个列表，保持展开状态
+      renderCurrentTab();
     }
     if (changes.socketProxy) {
       loadProxyStatus();
+      renderCurrentTab();
     }
   });
 });
 
-// 用于存储分组展开状态
-const expandedGroups = new Set();
+/* ============================================================
+   当前页面解析（issue #8）
+   ============================================================ */
 
-// 操作状态管理
-const operationState = {
-  updating: false,
-  lastUpdateTime: 0,
-  operationQueue: []
-};
+// 获取当前活动标签页并解析域名
+async function loadCurrentTab () {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const url = tab && tab.url ? tab.url : '';
 
-// 加载分组列表
-async function loadGroups() {
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      try {
+        currentTab = { hostname: new URL(url).hostname.toLowerCase(), valid: true };
+      } catch {
+        currentTab = { hostname: null, valid: false };
+      }
+    } else {
+      currentTab = { hostname: null, valid: false };
+    }
+  } catch (error) {
+    currentTab = { hostname: null, valid: false };
+  }
+
+  renderCurrentTab();
+}
+
+// 构建「域名 -> {ip, groupName, rule}」映射（仅启用分组中的启用规则）
+// 后写覆盖先写，与 PAC 脚本的对象语义保持一致
+function buildActiveRuleMap (hostsGroups, activeGroups) {
+  const map = new Map();
+  hostsGroups.forEach(group => {
+    if (!activeGroups.includes(group.id) || !Array.isArray(group.hosts)) return;
+    group.hosts.forEach(host => {
+      if (host.enabled && host.domain) {
+        map.set(host.domain, { ip: host.ip, groupName: group.name, rule: host.domain });
+      }
+    });
+  });
+  return map;
+}
+
+// 与 PAC 相同的解析顺序：精确匹配优先，其次通配符父域
+function resolveHostname (hostname, ruleMap) {
+  if (ruleMap.has(hostname)) {
+    return ruleMap.get(hostname);
+  }
+
+  let dotPos = hostname.indexOf('.');
+  while (dotPos !== -1) {
+    const candidate = '*.' + hostname.slice(dotPos + 1);
+    if (ruleMap.has(candidate)) {
+      return ruleMap.get(candidate);
+    }
+    dotPos = hostname.indexOf('.', dotPos + 1);
+  }
+
+  return null;
+}
+
+// 直连白名单检查（与 PAC 逻辑一致）
+function isBypassed (hostname, socketProxy) {
+  const list = socketProxy && Array.isArray(socketProxy.bypassList) ? socketProxy.bypassList : [];
+  if (list.length === 0) return false;
+
+  const exact = new Set();
+  const suffixes = [];
+
+  list.forEach(raw => {
+    if (!raw || typeof raw !== 'string') return;
+    const value = raw.trim().toLowerCase();
+    if (!value) return;
+    if (value.startsWith('*.')) {
+      if (value.length > 2) suffixes.push(value.slice(2));
+    } else {
+      exact.add(value);
+    }
+  });
+
+  if (exact.has(hostname)) return true;
+
+  for (const suffix of suffixes) {
+    if (hostname === suffix ||
+      (hostname.length > suffix.length && hostname.slice(-suffix.length - 1) === '.' + suffix)) {
+      return true;
+    }
+  }
+
+  // 裸域名白名单同时覆盖其所有子域
+  let dotPos = hostname.indexOf('.');
+  while (dotPos !== -1) {
+    if (exact.has(hostname.slice(dotPos + 1))) return true;
+    dotPos = hostname.indexOf('.', dotPos + 1);
+  }
+
+  return false;
+}
+
+// 渲染当前页面卡片
+async function renderCurrentTab () {
+  const body = document.getElementById('current-tab-body');
+  if (!body) return;
+
+  if (!currentTab.valid || !currentTab.hostname) {
+    body.innerHTML = '<div class="tab-state">此页面不适用 hosts 映射</div>';
+    return;
+  }
+
+  try {
+    const result = await chrome.storage.local.get(['hostsGroups', 'activeGroups', 'socketProxy']);
+    const ruleMap = buildActiveRuleMap(result.hostsGroups || [], result.activeGroups || []);
+    const matched = resolveHostname(currentTab.hostname, ruleMap);
+    const bypassed = matched && isBypassed(currentTab.hostname, result.socketProxy);
+
+    body.innerHTML = '';
+
+    const resolution = document.createElement('div');
+    resolution.className = 'resolution' + (matched && !bypassed ? '' : ' muted');
+
+    const domainEl = document.createElement('span');
+    domainEl.className = 'res-domain';
+    domainEl.textContent = currentTab.hostname;
+    domainEl.title = currentTab.hostname;
+    resolution.appendChild(domainEl);
+
+    const arrowEl = document.createElement('span');
+    arrowEl.className = 'res-arrow';
+    arrowEl.textContent = '→';
+    resolution.appendChild(arrowEl);
+
+    if (matched) {
+      const ipEl = document.createElement('span');
+      ipEl.className = 'res-ip';
+      ipEl.textContent = matched.ip;
+      ipEl.title = matched.ip;
+      resolution.appendChild(ipEl);
+    } else {
+      const noneEl = document.createElement('span');
+      noneEl.className = 'res-none';
+      noneEl.textContent = '未命中映射';
+      resolution.appendChild(noneEl);
+    }
+
+    body.appendChild(resolution);
+
+    // 命中时展示来源分组等元信息
+    if (matched) {
+      const meta = document.createElement('div');
+      meta.className = 'res-meta';
+
+      const groupChip = document.createElement('span');
+      groupChip.className = 'chip chip-pine';
+      groupChip.textContent = matched.groupName;
+      groupChip.title = `来自分组：${matched.groupName}`;
+      meta.appendChild(groupChip);
+
+      if (matched.rule.startsWith('*.')) {
+        const ruleChip = document.createElement('span');
+        ruleChip.className = 'chip';
+        ruleChip.textContent = matched.rule;
+        ruleChip.title = `通配符规则：${matched.rule}`;
+        meta.appendChild(ruleChip);
+      }
+
+      if (bypassed) {
+        const bypassChip = document.createElement('span');
+        bypassChip.className = 'chip chip-warn';
+        bypassChip.textContent = '已直连白名单，映射未生效';
+        meta.appendChild(bypassChip);
+      }
+
+      body.appendChild(meta);
+    }
+  } catch (error) {
+    body.innerHTML = '<div class="tab-state">加载失败，请重试</div>';
+  }
+}
+
+/* ============================================================
+   分组列表
+   ============================================================ */
+
+async function loadGroups () {
   try {
     const result = await chrome.storage.local.get(['hostsGroups', 'activeGroups']);
     const hostsGroups = result.hostsGroups || [];
@@ -57,7 +251,7 @@ async function loadGroups() {
     const groupsList = document.getElementById('groups-list');
 
     if (hostsGroups.length === 0) {
-      groupsList.innerHTML = '<div class="empty-state">暂无分组，点击上方设置创建</div>';
+      groupsList.innerHTML = '<div class="empty-state">暂无分组，点击右上角设置创建</div>';
       return;
     }
 
@@ -81,6 +275,7 @@ async function loadGroups() {
       const groupName = document.createElement('span');
       groupName.className = 'menu-text';
       groupName.textContent = group.name;
+      groupName.title = group.name;
 
       // 分组开关
       const toggleLabel = document.createElement('label');
@@ -123,7 +318,7 @@ async function loadGroups() {
 
           const ruleContent = document.createElement('div');
           ruleContent.className = 'rule-content';
-          ruleContent.title = host.ip + " " + host.domain;
+          ruleContent.title = host.ip + ' ' + host.domain;
 
           const ruleIp = document.createElement('span');
           ruleIp.className = 'rule-ip';
@@ -192,24 +387,32 @@ async function loadGroups() {
   }
 }
 
-// 加载代理状态
-async function loadProxyStatus() {
+/* ============================================================
+   Socket 代理
+   ============================================================ */
+
+async function loadProxyStatus () {
   try {
     const result = await chrome.storage.local.get(['socketProxy']);
     const socketProxy = result.socketProxy || {};
 
-    const proxySwitch = document.getElementById('proxy-switch');
     const proxyStatus = document.getElementById('proxy-status');
     const proxyItem = document.getElementById('proxy-item');
 
+    // 通过克隆移除旧的 change 监听器，再重新绑定
+    let proxySwitch = document.getElementById('proxy-switch');
+    const newSwitch = proxySwitch.cloneNode(true);
+    proxySwitch.parentNode.replaceChild(newSwitch, proxySwitch);
+    proxySwitch = newSwitch;
+
     // 如果代理未配置，显示提示
     if (!socketProxy.host || !socketProxy.port) {
-      proxyStatus.textContent = '未配置';
-      proxyStatus.title = '未配置';
+      proxyStatus.textContent = '未配置，点击设置';
+      proxyStatus.title = '前往设置页配置 Socket 代理';
       proxySwitch.checked = false;
       proxySwitch.disabled = true;
 
-      proxyItem.style.cursor = 'pointer';
+      proxyItem.classList.add('clickable');
       proxyItem.onclick = () => {
         chrome.tabs.create({ url: 'page.html' });
         window.close();
@@ -222,26 +425,14 @@ async function loadProxyStatus() {
       proxySwitch.checked = !!socketProxy.enabled;
       proxySwitch.disabled = false;
 
-      // 移除点击事件
-      proxyItem.style.cursor = 'default';
+      proxyItem.classList.remove('clickable');
       proxyItem.onclick = null;
 
-      // 清除旧的事件监听器
-      const newSwitch = proxySwitch.cloneNode(true);
-      proxySwitch.parentNode.replaceChild(newSwitch, proxySwitch);
-
       // 代理开关事件
-      newSwitch.addEventListener('change', async () => {
-        await updateSocketProxyStatus(socketProxy, newSwitch.checked);
+      proxySwitch.addEventListener('change', async () => {
+        await updateSocketProxyStatus(socketProxy, proxySwitch.checked);
       });
     }
-
-    // 阻止事件冒泡
-    document.getElementById('proxy-toggle').addEventListener('click', (e) => {
-      if (!proxySwitch.disabled) {
-        e.stopPropagation();
-      }
-    });
   } catch (error) {
     const proxyStatus = document.getElementById('proxy-status');
     proxyStatus.textContent = '加载失败';
@@ -249,7 +440,12 @@ async function loadProxyStatus() {
 }
 
 // 更新Socket代理状态
-async function updateSocketProxyStatus(socketProxy, enabled) {
+async function updateSocketProxyStatus (socketProxy, enabled) {
+  const proxySwitch = document.getElementById('proxy-switch');
+  const proxyStatus = document.getElementById('proxy-status');
+  const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
+  const normalText = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
+
   try {
     // 防止重复操作
     if (operationState.updating) {
@@ -258,14 +454,8 @@ async function updateSocketProxyStatus(socketProxy, enabled) {
 
     operationState.updating = true;
 
-    // 显示更新中状态
-    const proxySwitch = document.getElementById('proxy-switch');
-    const proxyStatus = document.getElementById('proxy-status');
-    const originalText = proxyStatus.textContent;
-
     proxySwitch.disabled = true;
     proxyStatus.textContent = '更新中...';
-    proxyStatus.title = '更新中...';
 
     await chrome.storage.local.set({
       socketProxy: {
@@ -274,36 +464,31 @@ async function updateSocketProxyStatus(socketProxy, enabled) {
       }
     });
 
-    // 使用 MessageBridge 发送消息给后台脚本更新代理设置
-    await window.MessageBridge.updateProxySettings();
+    // 通知后台脚本更新代理设置
+    if (window.MessageBridge) {
+      await window.MessageBridge.updateProxySettings();
+    }
 
-    // 恢复状态显示
-    const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
-    proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
-    proxyStatus.title = proxyStatus.textContent;
+    proxyStatus.textContent = normalText;
+    proxyStatus.title = normalText;
     proxySwitch.disabled = false;
-
   } catch (error) {
-
-    // 恢复开关状态
-    const proxySwitch = document.getElementById('proxy-switch');
-    proxySwitch.checked = !enabled;
+    // 后台监听 storage 变化仍会应用配置，这里只恢复 UI
+    proxyStatus.textContent = normalText;
+    proxyStatus.title = normalText;
     proxySwitch.disabled = false;
-
-    // 恢复状态文本
-    const proxyStatus = document.getElementById('proxy-status');
-    const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
-    proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
-    proxyStatus.title = proxyStatus.textContent;
-
-    console.error('代理状态更新失败，请重试');
+    console.error('代理状态更新失败:', error);
   } finally {
     operationState.updating = false;
   }
 }
 
+/* ============================================================
+   开关操作
+   ============================================================ */
+
 // 切换分组状态
-async function toggleGroup(groupId, enabled) {
+async function toggleGroup (groupId, enabled) {
   try {
     // 防止重复操作
     if (operationState.updating) {
@@ -334,8 +519,10 @@ async function toggleGroup(groupId, enabled) {
 
     await chrome.storage.local.set({ activeGroups });
 
-    // 使用 MessageBridge 发送消息给后台脚本更新代理设置
-    await window.MessageBridge.updateProxySettings();
+    // 通知后台脚本更新代理设置
+    if (window.MessageBridge) {
+      await window.MessageBridge.updateProxySettings();
+    }
 
     // 恢复开关状态
     if (groupSection) {
@@ -344,7 +531,6 @@ async function toggleGroup(groupId, enabled) {
         toggle.disabled = false;
       }
     }
-
   } catch (error) {
     console.error('切换分组状态失败:', error);
 
@@ -363,7 +549,7 @@ async function toggleGroup(groupId, enabled) {
 }
 
 // 切换单个Host状态
-async function toggleHost(groupId, hostId, enabled) {
+async function toggleHost (groupId, hostId, enabled) {
   try {
     // 防止重复操作
     if (operationState.updating) {
@@ -390,14 +576,16 @@ async function toggleHost(groupId, hostId, enabled) {
 
         await chrome.storage.local.set({ hostsGroups });
 
-        // 使用 MessageBridge 发送消息给后台脚本更新代理设置
-        await window.MessageBridge.updateProxySettings();
-
-        // 恢复开关状态
-        if (ruleToggleInput) {
-          ruleToggleInput.disabled = false;
+        // 通知后台脚本更新代理设置
+        if (window.MessageBridge) {
+          await window.MessageBridge.updateProxySettings();
         }
       }
+    }
+
+    // 恢复开关状态
+    if (ruleToggleInput) {
+      ruleToggleInput.disabled = false;
     }
   } catch (error) {
     console.error('切换主机状态失败:', error);

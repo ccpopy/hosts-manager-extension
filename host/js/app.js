@@ -2,7 +2,6 @@
  * 应用程序类
  * 主要负责应用初始化、页面导航和生命周期管理
  */
-import { setupMenuNavigation } from './components/MenuItem.js';
 import StateService from './services/StateService.js';
 import { Message } from './utils/MessageUtils.js';
 
@@ -154,9 +153,6 @@ export default class App {
       // 初始化当前页面
       await this.initCurrentPage();
 
-      // 设置菜单导航
-      setupMenuNavigation();
-
       // 监听菜单点击事件
       this.setupMenuEvents();
 
@@ -287,12 +283,16 @@ export default class App {
     const header = document.createElement('div');
     header.className = 'header';
 
+    // 品牌区：文件名风格的字标 + 版本号
     const title = document.createElement('div');
     title.className = 'title';
-    title.textContent = 'Hosts Manager';
+
+    const wordmark = document.createElement('span');
+    wordmark.className = 'wordmark';
+    wordmark.textContent = 'hosts-manager';
 
     const versionInfo = document.createElement('span');
-    versionInfo.className = 'version-info';
+    versionInfo.className = 'version-chip';
     // 安全地读取版本号，如果获取失败则使用默认值
     try {
       const manifest = chrome.runtime.getManifest();
@@ -301,9 +301,8 @@ export default class App {
       console.warn('获取版本信息失败:', error);
       versionInfo.textContent = 'v1.0.0';
     }
-    versionInfo.style.fontSize = '12px';
-    versionInfo.style.marginLeft = '8px';
-    versionInfo.style.color = 'var(--gray-500)';
+
+    title.appendChild(wordmark);
     title.appendChild(versionInfo);
 
     header.appendChild(title);
@@ -349,7 +348,7 @@ export default class App {
       pageContainer.style.display = pageId === this.currentPage ? 'block' : 'none';
       pageContainer.style.height = '100%';
       pageContainer.style.opacity = '1';
-      pageContainer.style.transition = 'opacity 0.3s ease';
+      pageContainer.style.transition = 'opacity 0.15s ease';
 
       this.pageContainers[pageId] = pageContainer;
       mainContent.appendChild(pageContainer);
@@ -473,7 +472,7 @@ export default class App {
         setTimeout(() => {
           currentContainer.removeEventListener('transitionend', onTransitionEnd);
           resolve();
-        }, 300);
+        }, 200);
       });
 
       // 隐藏当前页面
@@ -622,9 +621,6 @@ export default class App {
 
       // 显示页面加载指示器
       this.showPageLoadingIndicator(container);
-
-      // 模拟网络延迟以展示过渡动画
-      await new Promise(resolve => setTimeout(resolve, 300));
 
       // 动态导入页面组件
       if (!pageModules[pageName]) {

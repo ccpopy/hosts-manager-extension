@@ -7,75 +7,56 @@
   </head>
   <body>
     <div class="popup-container">
-      <!-- Hosts 设置菜单 -->
-      <div class="menu-item" id="open-settings">
-        <span class="menu-icon">
-          <svg class="icon" style="width: 1em; height: 1em; vertical-align: middle; fill: currentColor; overflow: hidden" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg">
-            <path
-              d="M267.6 487.9h490.8c110.8 0 200.9-90.1 200.9-200.9S869.2 86.1 758.4 86.1H267.6C156.8 86.1 66.7 176.2 66.7 287s90.1 200.9 200.9 200.9z m0-283.5h490.8c45.5 0 82.6 37.1 82.6 82.6s-37.1 82.6-82.6 82.6H267.6c-45.5 0-82.6-37.1-82.6-82.6s37.1-82.6 82.6-82.6z"
-              fill="#525252"
-            ></path>
-            <path d="M341.5 289.1m-70.8 0a70.8 70.8 0 1 0 141.6 0 70.8 70.8 0 1 0-141.6 0Z" fill="#525252"></path>
-            <path
-              d="M758.4 534.1H267.6c-110.8 0-200.9 90.1-200.9 200.9s90.1 200.9 200.9 200.9h490.8c110.8 0 200.9-90.1 200.9-200.9s-90.1-200.9-200.9-200.9z m-55.6 271.7c-39.1 0-70.8-31.7-70.8-70.8s31.7-70.8 70.8-70.8 70.8 31.7 70.8 70.8-31.7 70.8-70.8 70.8z"
-              fill="#525252"
-            ></path>
+      <!-- 顶栏：字标 + 设置入口 -->
+      <header class="popup-header">
+        <div class="brand">
+          <span class="wordmark">hosts-manager</span>
+        </div>
+        <button id="open-settings" class="icon-link" title="打开设置" aria-label="打开设置">
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" width="18" height="18">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
           </svg>
-        </span>
-        <span class="menu-text">Hosts 设置</span>
-      </div>
+        </button>
+      </header>
 
-      <div class="groups-title">
-        <span class="menu-icon">
-          <svg viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg">
-            <path d="M0 0h1024v1024H0z" fill="#FFFFFF"></path>
-            <path d="M0 416h860v80H0zM140 294h296a12 12 0 0 1 12 12v56a12 12 0 0 1-12 12H140a12 12 0 0 1-12-12v-56a12 12 0 0 1 12-12zM500 294h88a12 12 0 0 1 12 12v56a12 12 0 0 1-12 12h-88a12 12 0 0 1-12-12v-56a12 12 0 0 1 12-12z" fill="currentColor"></path>
-            <path
-              d="M700 944c44.112 0 80-35.888 80-80v-84h84c44.112 0 80-35.888 80-80V160c0-44.112-35.888-80-80-80H324c-44.112 0-80 35.888-80 80v84H160c-44.112 0-80 35.888-80 80v540c0 44.112 35.888 80 80 80h540m0 80H160c-88.366 0-160-71.634-160-160V324c0-88.366 71.634-160 160-160h4v-4c0-88.366 71.634-160 160-160h540c88.366 0 160 71.634 160 160v540c0 88.366-71.634 160-160 160h-4v4c0 88.366-71.634 160-160 160z"
-              fill="currentColor"
-            ></path>
-            <path
-              d="M160 244c-44.112 0-80 35.888-80 80v540c0 44.112 35.888 80 80 80h540c44.112 0 80-35.888 80-80V324c0-44.112-35.888-80-80-80H160m0-80h540c88.366 0 160 71.634 160 160v540c0 88.366-71.634 160-160 160H160c-88.366 0-160-71.634-160-160V324c0-88.366 71.634-160 160-160z"
-              fill="currentColor"
-            ></path>
-          </svg>
-        </span>
-        <span class="menu-text">分组列表</span>
-      </div>
+      <!-- 当前页面解析卡片：域名 → 映射 IP -->
+      <section class="current-tab-card">
+        <div class="card-eyebrow">当前页面</div>
+        <div id="current-tab-body" class="current-tab-body">
+          <div class="tab-state">加载中...</div>
+        </div>
+      </section>
 
       <!-- 分组列表 -->
-      <div id="groups-list">
-        <div class="empty-state">加载中...</div>
-      </div>
+      <section class="panel">
+        <div class="panel-title">分组列表</div>
+        <div id="groups-list">
+          <div class="empty-state">加载中...</div>
+        </div>
+      </section>
 
-      <!-- Socket 代理设置 -->
-      <div class="proxy-section">
-        <div class="menu-item" id="proxy-item">
-          <span class="menu-icon">
-            <svg style="width: 1em; height: 1em; vertical-align: middle; fill: currentColor" viewBox="0 0 20 20">
-              <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
-            </svg>
-          </span>
-          <span class="menu-text">Socket 代理</span>
+      <!-- Socket 代理 -->
+      <section class="panel">
+        <div class="proxy-row" id="proxy-item">
+          <span class="proxy-label">Socket 代理</span>
           <span id="proxy-status" class="status-text"></span>
           <label class="toggle-switch" id="proxy-toggle">
             <input type="checkbox" id="proxy-switch" />
             <span class="slider"></span>
           </label>
         </div>
-      </div>
+      </section>
 
-      <!-- GitHub 链接 -->
-      <div class="github-section">
-        <a href="https://github.com/ccpopy/hosts-manager-extension" target="_blank" class="github-link" title="查看项目源码">
-          <svg height="20" width="20" viewBox="0 0 16 16" version="1.1" aria-hidden="true">
-            <path
-              fill-rule="evenodd"
-              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
-            ></path>
+      <!-- 底部：版本号 + GitHub -->
+      <footer class="popup-footer">
+        <span class="version-chip" id="popup-version">v1.1.0</span>
+        <a href="https://github.com/ccpopy/hosts-manager-extension" target="_blank" class="footer-link" title="查看项目源码" aria-label="GitHub 项目主页">
+          <svg height="16" width="16" viewBox="0 0 16 16" aria-hidden="true">
+            <path fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
           </svg>
         </a>
-      </div>
+      </footer>
     </div>
     <script src="./js/popup.js"></script>
   </body>

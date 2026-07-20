@@ -35,8 +35,10 @@ const debugLog = (...args) => {
 // Global state
 const state = {
   activeHostsMap: {},
+  activeRuleMeta: {},
   activeGroups: [],
   currentConfig: null,
+  lastSocketProxy: null,
   proxyState: {
     updating: false,
     lastUpdateTime: 0,
@@ -51,8 +53,15 @@ const state = {
 // Service Worker Revitalization Mechanism
 let keepAliveInterval = null;
 
+// Guards to keep initialization idempotent across activate/onInstalled/onStartup
+let initialized = false;
+let storageListenerAttached = false;
+
 // startKeepAlive function to keep Service Worker alive
 function startKeepAlive() {
+  if (keepAliveInterval) {
+    return;
+  }
   keepAliveInterval = setInterval(() => {
     chrome.storage.local.get(null, () => {
       // Simple storage access to keep Service Worker alive
@@ -86,11 +95,16 @@ chrome.runtime.onStartup.addListener(() => {
 // Initialize extension
 async function initializeExtension() {
   try {
+    if (initialized) {
+      return;
+    }
+    initialized = true;
+
     startKeepAlive();
     await loadInitialState();
-    setupStorageListener();
-    setupMessageListener();
+    await refreshActiveTabIndicators();
   } catch (error) {
+    initialized = false;
     console.error('Failed to initialize extension:', error);
   }
 }
@@ -149,8 +163,13 @@ async function activateAllGroups(hostsGroups) {
   }
 }
 
-// Setup storage change listener
+// Setup storage change listener (idempotent)
 function setupStorageListener() {
+  if (storageListenerAttached) {
+    return;
+  }
+  storageListenerAttached = true;
+
   chrome.storage.onChanged.addListener((changes) => {
     debugLog('[Storage] Changes detected:', Object.keys(changes));
     if (changes.socketProxy) {
@@ -230,12 +249,17 @@ async function updateActiveHostsMap() {
   try {
     const data = await getStorageData(['hostsGroups', 'activeGroups']);
 
-    state.activeHostsMap = buildActiveHostsMap(data);
+    const built = buildActiveHostsMap(data);
+    state.activeHostsMap = built.hostsMap;
+    state.activeRuleMeta = built.ruleMeta;
     state.activeGroups = data.activeGroups || [];
 
     await updateProxySettings();
 
     processUpdateQueue(true);
+
+    // Keep per-tab IP indicators in sync with the new mapping
+    refreshActiveTabIndicators();
   } catch (error) {
     processUpdateQueue(false, error);
     throw error;
@@ -244,9 +268,13 @@ async function updateActiveHostsMap() {
   }
 }
 
-// Build active hosts map from storage data
+// Build active hosts map from storage data.
+// Returns both the flat domain->ip map used by the PAC script and a metadata
+// map (domain -> {ip, groupName, rule}) used by the toolbar tooltip.
+// Later groups overwrite earlier ones, matching PAC object semantics.
 function buildActiveHostsMap(data) {
   const hostsMap = {};
+  const ruleMeta = {};
   const { hostsGroups = [], activeGroups = [] } = data;
 
   hostsGroups.forEach(group => {
@@ -254,12 +282,17 @@ function buildActiveHostsMap(data) {
       group.hosts.forEach(host => {
         if (host.enabled) {
           hostsMap[host.domain] = host.ip;
+          ruleMeta[host.domain] = {
+            ip: host.ip,
+            groupName: group.name || '',
+            rule: host.domain
+          };
         }
       });
     }
   });
 
-  return hostsMap;
+  return { hostsMap, ruleMeta };
 }
 
 // Enqueue update request
@@ -287,6 +320,7 @@ async function updateProxySettings() {
 
   try {
     const socketProxy = await getSocketProxyConfig();
+    state.lastSocketProxy = socketProxy;
     const hasActiveHosts = Object.keys(state.activeHostsMap).length > 0;
     const hasSocketProxy = isSocketProxyConfigured(socketProxy);
 
@@ -505,40 +539,29 @@ function formatProxyHost(host) {
 }
 
 // Build proxy string based on configuration
+// NOTE: PAC proxy directives do not support embedded credentials
+// ("PROXY user:pass@host:port" is invalid and breaks proxy resolution).
+// HTTP/HTTPS proxy credentials are supplied via webRequest.onAuthRequired.
+// Chromium cannot perform SOCKS authentication at all (crbug.com/256785).
 function buildProxyString(socketProxy) {
   if (!socketProxy || !socketProxy.enabled || !socketProxy.host || !socketProxy.port) {
     return '';
   }
 
-  const { protocol = 'SOCKS5', host, port, auth } = socketProxy;
-  const authString = buildAuthString(auth);
+  const { protocol = 'SOCKS5', host, port } = socketProxy;
   const proxyHost = formatProxyHost(host);
 
   switch (protocol) {
     case 'HTTP':
     case 'HTTPS':
-      return authString
-        ? `PROXY ${authString}@${proxyHost}:${port}`
-        : `PROXY ${proxyHost}:${port}`;
+      return `PROXY ${proxyHost}:${port}`;
     case 'SOCKS4':
       return `SOCKS4 ${proxyHost}:${port}`;
     case 'SOCKS':
-      return authString
-        ? `SOCKS5 ${authString}@${proxyHost}:${port}; SOCKS ${proxyHost}:${port}`
-        : `SOCKS5 ${proxyHost}:${port}; SOCKS ${proxyHost}:${port}`;
+      return `SOCKS5 ${proxyHost}:${port}; SOCKS ${proxyHost}:${port}`;
     default:
-      return authString
-        ? `SOCKS5 ${authString}@${proxyHost}:${port}`
-        : `SOCKS5 ${proxyHost}:${port}`;
+      return `SOCKS5 ${proxyHost}:${port}`;
   }
-}
-
-// Build authentication string
-function buildAuthString(auth) {
-  if (!auth || !auth.enabled || !auth.username || !auth.password) {
-    return '';
-  }
-  return `${auth.username}:${auth.password}`;
 }
 
 // Normalize bypass rule for PAC usage
@@ -667,23 +690,40 @@ function buildPacScriptContent({ hostsJson, socksEnabled, proxyString, bypassExa
 
     var hostInfo = splitHostAndPort(host, "80");
     var domainPart = hostInfo.host;
-    var port = hostInfo.port;
 
     domainPart = domainPart.toLowerCase();
 
-    if (isPlainHostName(domainPart) ||
-        domainPart === 'localhost' ||
-        domainPart === '127.0.0.1' ||
-        domainPart.indexOf('.local') !== -1) {
-      return 'DIRECT';
+    // Default target port comes from the URL authority when present
+    // (the PAC host argument never carries a port).
+    var urlPort = "80";
+    var schemeEnd = url.indexOf('://');
+    if (schemeEnd !== -1) {
+      var afterScheme = url.slice(schemeEnd + 3);
+      var slashPos = afterScheme.indexOf('/');
+      var authority = slashPos === -1 ? afterScheme : afterScheme.slice(0, slashPos);
+      var authorityInfo = splitHostAndPort(authority, "80");
+      if (authorityInfo.port) {
+        urlPort = String(authorityInfo.port);
+      }
+    }
+
+    // Resolve mapping: exact match first, then wildcard parents
+    // so a rule like "*.example.com" covers all of its subdomains.
+    var mappedValue = hostsMapping[domainPart];
+    if (!mappedValue) {
+      var wildcardPos = domainPart.indexOf('.');
+      while (wildcardPos !== -1 && !mappedValue) {
+        mappedValue = hostsMapping['*.' + domainPart.slice(wildcardPos + 1)];
+        wildcardPos = domainPart.indexOf('.', wildcardPos + 1);
+      }
     }
 
     if (isBypassed(domainPart)) {
       return 'DIRECT';
     }
 
-    if (hostsMapping[domainPart]) {
-      var mappingInfo = splitHostAndPort(hostsMapping[domainPart], port);
+    if (mappedValue) {
+      var mappingInfo = splitHostAndPort(mappedValue, urlPort);
       var mappedIP = mappingInfo.host;
       var mappedPort = mappingInfo.port;
 
@@ -698,6 +738,14 @@ function buildPacScriptContent({ hostsJson, socksEnabled, proxyString, bypassExa
       }
     }
 
+    // Unmapped local names never go through the proxy
+    if (isPlainHostName(domainPart) ||
+        domainPart === 'localhost' ||
+        domainPart === '127.0.0.1' ||
+        (domainPart.length > 6 && domainPart.slice(-6) === '.local')) {
+      return 'DIRECT';
+    }
+
     ${socksEnabled ? `return '${proxyString}';` : `return 'DIRECT';`}
   }`;
 }
@@ -710,6 +758,268 @@ function handleProxyError(error) {
     const resetTime = CONSTANTS.ERROR_RESET_TIME / 1000;
     console.warn(`Proxy settings update failed ${state.proxyState.errorCount} times, will retry after ${resetTime} seconds`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Proxy authentication
+// Chrome ignores credentials embedded in PAC directives, so HTTP/HTTPS proxy
+// auth challenges are answered here instead. SOCKS auth is not supported by
+// Chromium and cannot be provided through this API.
+// ---------------------------------------------------------------------------
+
+let authListenerAttached = false;
+const authAttempts = new Map();
+const MAX_AUTH_ATTEMPTS = 2;
+
+function setupProxyAuthListener() {
+  if (authListenerAttached) {
+    return;
+  }
+  if (!chrome.webRequest || !chrome.webRequest.onAuthRequired) {
+    return;
+  }
+  authListenerAttached = true;
+
+  chrome.webRequest.onAuthRequired.addListener(
+    handleAuthRequired,
+    { urls: ['<all_urls>'] },
+    ['asyncBlocking']
+  );
+
+  chrome.webRequest.onCompleted.addListener(clearAuthAttempt, { urls: ['<all_urls>'] });
+  chrome.webRequest.onErrorOccurred.addListener(clearAuthAttempt, { urls: ['<all_urls>'] });
+}
+
+function clearAuthAttempt(details) {
+  authAttempts.delete(details.requestId);
+}
+
+function handleAuthRequired(details, asyncCallback) {
+  // Only answer proxy challenges. Origin-server authentication must never
+  // receive the credentials configured for the upstream proxy.
+  if (!details.isProxy) {
+    asyncCallback({});
+    return;
+  }
+
+  const attempts = authAttempts.get(details.requestId) || 0;
+  if (attempts >= MAX_AUTH_ATTEMPTS) {
+    // Wrong credentials: give up so Chrome can show its own prompt
+    asyncCallback({});
+    return;
+  }
+
+  getSocketProxyConfig().then((socketProxy) => {
+    const usable = socketProxy &&
+      socketProxy.enabled &&
+      (socketProxy.protocol === 'HTTP' || socketProxy.protocol === 'HTTPS') &&
+      socketProxy.auth &&
+      socketProxy.auth.enabled &&
+      socketProxy.auth.username &&
+      socketProxy.auth.password &&
+      isConfiguredProxyChallenge(details.challenger, socketProxy);
+
+    if (!usable) {
+      asyncCallback({});
+      return;
+    }
+
+    authAttempts.set(details.requestId, attempts + 1);
+    if (authAttempts.size > 500) {
+      authAttempts.clear();
+    }
+
+    asyncCallback({
+      authCredentials: {
+        username: socketProxy.auth.username,
+        password: socketProxy.auth.password
+      }
+    });
+  }).catch(() => {
+    asyncCallback({});
+  });
+}
+
+// Match the authentication challenger to the configured upstream proxy before
+// disclosing credentials. Brackets around IPv6 literals are ignored because
+// Chrome may report the challenger with or without them.
+function isConfiguredProxyChallenge(challenger, socketProxy) {
+  if (!challenger || !socketProxy) {
+    return false;
+  }
+
+  const normalizeHost = (value) => {
+    let host = String(value || '').trim().toLowerCase();
+    if (host.startsWith('[') && host.endsWith(']')) {
+      host = host.slice(1, -1);
+    }
+    return host;
+  };
+
+  const challengerHost = normalizeHost(challenger.host);
+  const configuredHost = normalizeHost(socketProxy.host);
+  const challengerPort = Number(challenger.port);
+  const configuredPort = Number(socketProxy.port);
+
+  return challengerHost !== '' &&
+    challengerHost === configuredHost &&
+    Number.isInteger(challengerPort) &&
+    challengerPort === configuredPort;
+}
+
+// ---------------------------------------------------------------------------
+// Per-tab IP indicator (issue #8)
+// When the active mapping covers the tab's domain, show a small "IP" badge on
+// the toolbar icon and put "domain -> ip" into the icon tooltip, so the same
+// domain can be told apart between production and a mapped local environment.
+// ---------------------------------------------------------------------------
+
+let tabListenersAttached = false;
+const DEFAULT_ACTION_TITLE = 'Hosts Manager';
+const BADGE_COLOR = '#1A6B5D';
+
+function setupTabIndicatorListeners() {
+  if (tabListenersAttached) {
+    return;
+  }
+  if (!chrome.tabs || !chrome.action) {
+    return;
+  }
+  tabListenersAttached = true;
+
+  if (chrome.action.setBadgeBackgroundColor) {
+    chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
+  }
+
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    chrome.tabs.get(activeInfo.tabId, (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+        return;
+      }
+      updateTabIndicator(tab.id, tab.url);
+    });
+  });
+
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.url || changeInfo.status === 'loading' || changeInfo.status === 'complete') {
+      updateTabIndicator(tabId, tab && tab.url);
+    }
+  });
+}
+
+// Extract a lowercase hostname from a http(s) URL, null otherwise
+function extractHostname(url) {
+  if (!url || typeof url !== 'string') {
+    return null;
+  }
+  if (url.indexOf('http://') !== 0 && url.indexOf('https://') !== 0) {
+    return null;
+  }
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch (error) {
+    return null;
+  }
+}
+
+// Resolve a hostname against the active mapping (exact first, then wildcards)
+// Returns the rule metadata {ip, groupName, rule} or null
+function resolveMappedRule(hostname) {
+  if (!hostname) {
+    return null;
+  }
+
+  const meta = state.activeRuleMeta || {};
+  if (meta[hostname]) {
+    return meta[hostname];
+  }
+
+  let dotPos = hostname.indexOf('.');
+  while (dotPos !== -1) {
+    const candidate = '*.' + hostname.slice(dotPos + 1);
+    if (meta[candidate]) {
+      return meta[candidate];
+    }
+    dotPos = hostname.indexOf('.', dotPos + 1);
+  }
+
+  return null;
+}
+
+// Check the cached bypass list the same way the PAC script does
+function isHostnameBypassed(hostname) {
+  const socketProxy = state.lastSocketProxy;
+  if (!socketProxy) {
+    return false;
+  }
+
+  const bypass = buildBypassRules(socketProxy);
+  if (bypass.exact[hostname]) {
+    return true;
+  }
+  for (const suffix of bypass.suffixes) {
+    if (hostname === suffix ||
+      (hostname.length > suffix.length && hostname.slice(-suffix.length - 1) === '.' + suffix)) {
+      return true;
+    }
+  }
+  let dotPos = hostname.indexOf('.');
+  while (dotPos !== -1) {
+    if (bypass.exact[hostname.slice(dotPos + 1)]) {
+      return true;
+    }
+    dotPos = hostname.indexOf('.', dotPos + 1);
+  }
+  return false;
+}
+
+function updateTabIndicator(tabId, url) {
+  if (typeof tabId !== 'number' || tabId < 0) {
+    return;
+  }
+
+  const hostname = extractHostname(url);
+  const rule = hostname && !isHostnameBypassed(hostname)
+    ? resolveMappedRule(hostname)
+    : null;
+
+  try {
+    if (rule) {
+      // ZeroOmega-style tooltip: app name, resolution line, source group.
+      // groupName / rule come from user data at runtime; source stays ASCII.
+      const titleLines = [DEFAULT_ACTION_TITLE, hostname + ' -> ' + rule.ip];
+      if (rule.rule && rule.rule !== hostname) {
+        titleLines.push('(' + rule.rule + ')');
+      }
+      if (rule.groupName) {
+        titleLines.push(rule.groupName);
+      }
+      chrome.action.setBadgeText({ tabId, text: 'IP' });
+      chrome.action.setTitle({ tabId, title: titleLines.join('\n') });
+    } else {
+      chrome.action.setBadgeText({ tabId, text: '' });
+      chrome.action.setTitle({ tabId, title: DEFAULT_ACTION_TITLE });
+    }
+  } catch (error) {
+    // Tab may be gone; nothing to do
+  }
+}
+
+// Refresh indicators for the active tab of every window
+function refreshActiveTabIndicators() {
+  if (!chrome.tabs) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    chrome.tabs.query({ active: true }, (tabs) => {
+      if (chrome.runtime.lastError || !tabs) {
+        resolve();
+        return;
+      }
+      tabs.forEach((tab) => updateTabIndicator(tab.id, tab.url));
+      resolve();
+    });
+  });
 }
 
 // Utility functions
@@ -744,6 +1054,14 @@ function setStorageData(data) {
     });
   });
 }
+
+// Register all event listeners synchronously at the top level so Chrome can
+// wake this service worker for tab, storage, message and auth events (MV3
+// requires listener registration in the first turn of the event loop).
+setupStorageListener();
+setupMessageListener();
+setupProxyAuthListener();
+setupTabIndicatorListeners();
 
 // Start the extension initialization process
 initializeExtension();

@@ -1,15 +1,15 @@
-import StateService from '../services/StateService.js';
 import { Message } from '../utils/MessageUtils.js';
 
 /**
  * 创建添加分组表单
- * @param {Function} onSave - 保存成功回调
+ * 表单本身不写入数据，收集输入后交给 onSave 处理（避免重复添加）
+ * @param {Function} onSave - 保存回调，参数为 { name, active }
  * @param {Function} onCancel - 取消回调
  * @returns {HTMLElement} - 表单DOM元素
  */
 export function createAddGroupForm (onSave, onCancel) {
   const formContainer = document.createElement('div');
-  formContainer.className = 'batch-import-section';
+  formContainer.className = 'batch-import-section add-group-form';
   formContainer.style.marginBottom = '24px';
 
   const formTitle = document.createElement('h3');
@@ -23,11 +23,13 @@ export function createAddGroupForm (onSave, onCancel) {
 
   const nameLabel = document.createElement('label');
   nameLabel.textContent = '分组名称:';
+  nameLabel.htmlFor = 'group-name';
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
   nameInput.id = 'group-name';
-  nameInput.placeholder = '输入分组名称';
+  nameInput.placeholder = '例如：测试环境';
+  nameInput.maxLength = 50;
 
   nameFormGroup.appendChild(nameLabel);
   nameFormGroup.appendChild(nameInput);
@@ -73,37 +75,40 @@ export function createAddGroupForm (onSave, onCancel) {
 
   const saveBtn = document.createElement('button');
   saveBtn.className = 'button button-primary';
-  saveBtn.textContent = '保存';
-  saveBtn.addEventListener('click', async () => {
+  saveBtn.textContent = '创建分组';
+
+  const submit = async () => {
     const name = nameInput.value.trim();
-    const enabled = checkbox.checked;
 
     if (!name) {
       Message.error('请输入分组名称');
+      nameInput.focus();
       return;
     }
 
-    const newGroup = {
-      id: Date.now().toString(),
-      name,
-      hosts: [],
-      enabled: true
-    };
+    saveBtn.disabled = true;
+    try {
+      if (onSave) {
+        await onSave({ name, active: checkbox.checked });
+      }
+    } finally {
+      saveBtn.disabled = false;
+    }
+  };
 
-    // 使用 StateService 添加分组
-    const success = await StateService.addGroup(newGroup, enabled);
-
-    if (success) {
-      // 回调传递新添加的分组
-      if (onSave) onSave(newGroup);
-    } else {
-      Message.error('分组名称已存在');
+  saveBtn.addEventListener('click', submit);
+  nameInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      submit();
     }
   });
 
   formActions.appendChild(cancelBtn);
   formActions.appendChild(saveBtn);
   formContainer.appendChild(formActions);
+
+  // 自动聚焦名称输入框
+  setTimeout(() => nameInput.focus(), 50);
 
   return formContainer;
 }

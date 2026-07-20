@@ -1,6 +1,7 @@
 /**
  * 分组项组件
  * 处理分组的创建和交互
+ * 重命名/删除操作直接放在分组头部，无需展开分组
  */
 import StateService from '../services/StateService.js';
 import Modal from './Modal.js';
@@ -38,8 +39,8 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
   groupItem.dataset.groupId = group.id;
   groupItem.dataset.active = String(isActive);
 
-  // 分组标题
-  const groupHeader = createGroupHeader(group, isActive, uniqueId, onUpdate);
+  // 分组标题（含重命名/删除操作）
+  const groupHeader = createGroupHeader(group, isActive, uniqueId, groupItem, onUpdate);
   groupItem.appendChild(groupHeader);
 
   // 分组内容区域
@@ -48,10 +49,10 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
   groupContent.style.display = 'none';
   groupContent.id = `${uniqueId}-content`;
 
-  // 折叠/展开功能
+  // 折叠/展开功能（点击开关或操作按钮时不触发）
   const handleHeaderClick = (e) => {
     if (e.target.tagName === 'INPUT' || e.target.className === 'slider' ||
-      e.target.closest('.toggle-switch')) {
+      e.target.closest('.toggle-switch') || e.target.closest('button')) {
       return;
     }
 
@@ -60,9 +61,7 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
 
     const expandIcon = groupHeader.querySelector('.expand-icon');
     if (expandIcon) {
-      expandIcon.innerHTML = isExpanded ?
-        '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>' :
-        '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
+      expandIcon.classList.toggle('expanded', isExpanded);
     }
 
     if (onExpandToggle) {
@@ -89,12 +88,25 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
     }
   });
 
-  // 分组编辑/删除操作
-  const actionButtons = createGroupActions(group, groupItem, onUpdate);
-  groupContent.appendChild(actionButtons);
-
   groupItem.appendChild(groupContent);
   return groupItem;
+}
+
+/**
+ * 创建头部图标按钮
+ * @param {string} title - 提示文字
+ * @param {string} svg - 图标SVG
+ * @param {string} extraClass - 额外类名
+ * @returns {HTMLElement} - 按钮元素
+ */
+function createIconButton (title, svg, extraClass = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `icon-button ${extraClass}`.trim();
+  button.title = title;
+  button.setAttribute('aria-label', title);
+  button.innerHTML = svg;
+  return button;
 }
 
 /**
@@ -102,10 +114,11 @@ export function createGroupElement (group, isActive, onUpdate = null, onExpandTo
  * @param {Object} group - 分组对象
  * @param {boolean} isActive - 是否激活
  * @param {string} uniqueId - 唯一ID
+ * @param {HTMLElement} groupItem - 分组根元素
  * @param {Function} onUpdate - 更新回调
  * @returns {HTMLElement} - 分组头部元素
  */
-function createGroupHeader (group, isActive, uniqueId, onUpdate) {
+function createGroupHeader (group, isActive, uniqueId, groupItem, onUpdate) {
   try {
     const groupHeader = document.createElement('div');
     groupHeader.className = 'group-header';
@@ -114,16 +127,11 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
     // 展开/折叠图标
     const expandIcon = document.createElement('div');
     expandIcon.className = 'expand-icon';
-    expandIcon.style.width = '20px';
-    expandIcon.style.height = '20px';
-    expandIcon.style.marginRight = '8px';
     expandIcon.innerHTML = '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
 
     // 分组名称和状态标签
     const groupNameContainer = document.createElement('div');
-    groupNameContainer.style.display = 'flex';
-    groupNameContainer.style.alignItems = 'center';
-    groupNameContainer.style.flex = '1';
+    groupNameContainer.className = 'group-name-container';
 
     const groupName = document.createElement('div');
     groupName.className = 'group-name';
@@ -138,8 +146,7 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
     const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
     const enabledCount = Array.isArray(group.hosts) ? group.hosts.filter(h => h.enabled).length : 0;
     const hostsCountTag = document.createElement('span');
-    hostsCountTag.className = 'status-tag status-tag-default';
-    hostsCountTag.style.marginLeft = '8px';
+    hostsCountTag.className = 'status-tag status-tag-default hosts-count-tag';
     hostsCountTag.textContent = `${enabledCount}/${hostsCount} 条规则`;
     hostsCountTag.title = `${enabledCount} 条启用规则，共 ${hostsCount} 条规则`;
 
@@ -147,13 +154,33 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
     groupNameContainer.appendChild(statusTag);
     groupNameContainer.appendChild(hostsCountTag);
 
-    // 分组开关
+    // 头部右侧操作区：重命名 / 删除 / 启用开关
     const groupActions = document.createElement('div');
     groupActions.className = 'group-actions';
+
+    const renameButton = createIconButton(
+      '重命名分组',
+      '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.862 4.487z"></path></svg>'
+    );
+    renameButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleRenameGroup(group, groupItem, renameButton, onUpdate);
+    });
+
+    const deleteButton = createIconButton(
+      '删除分组',
+      '<svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"></path></svg>',
+      'icon-button-danger'
+    );
+    deleteButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handleDeleteGroup(group, groupItem, deleteButton, onUpdate);
+    });
 
     const toggleSwitch = document.createElement('label');
     toggleSwitch.className = 'toggle-switch';
     toggleSwitch.setAttribute('aria-label', '启用或禁用分组');
+    toggleSwitch.title = isActive ? '禁用分组' : '启用分组';
 
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
@@ -177,11 +204,12 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
           // 立即更新 UI 状态
           statusTag.className = checkbox.checked ? 'status-tag status-tag-success' : 'status-tag status-tag-default';
           statusTag.textContent = checkbox.checked ? '已启用' : '已禁用';
+          toggleSwitch.title = checkbox.checked ? '禁用分组' : '启用分组';
 
           // 更新分组元素的激活状态
-          const groupItem = groupHeader.closest('.group-item');
-          if (groupItem) {
-            groupItem.dataset.active = String(checkbox.checked);
+          const item = groupHeader.closest('.group-item');
+          if (item) {
+            item.dataset.active = String(checkbox.checked);
           }
 
           // 如果提供了更新回调，则调用
@@ -224,6 +252,9 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
 
     toggleSwitch.appendChild(checkbox);
     toggleSwitch.appendChild(slider);
+
+    groupActions.appendChild(renameButton);
+    groupActions.appendChild(deleteButton);
     groupActions.appendChild(toggleSwitch);
 
     // 组装头部
@@ -239,6 +270,115 @@ function createGroupHeader (group, isActive, uniqueId, onUpdate) {
     errorHeader.className = 'group-header error';
     errorHeader.textContent = '加载分组头部失败';
     return errorHeader;
+  }
+}
+
+/**
+ * 重命名分组
+ * @param {Object} group - 分组对象
+ * @param {HTMLElement} groupItem - 分组元素
+ * @param {HTMLElement} renameButton - 触发按钮
+ * @param {Function} onUpdate - 更新回调
+ */
+async function handleRenameGroup (group, groupItem, renameButton, onUpdate) {
+  try {
+    renameButton.disabled = true;
+
+    const newName = await Modal.prompt('重命名分组', '输入新的分组名称:', group.name);
+    if (newName && newName.trim() && newName.trim() !== group.name) {
+      const success = await StateService.updateGroup(group.id, { name: newName.trim() });
+      if (success) {
+        // 本地更新分组名称
+        const groupName = groupItem.querySelector('.group-name');
+        if (groupName) {
+          groupName.textContent = newName.trim();
+        }
+
+        // 通知上层组件
+        if (onUpdate) {
+          onUpdate(group.id, 'renamed');
+        }
+
+        Message.success('分组重命名成功');
+      } else {
+        Message.error('重命名分组失败，可能存在同名分组');
+      }
+    }
+  } catch (error) {
+    console.error('重命名分组失败:', error);
+    Message.error('重命名分组失败，请重试');
+  } finally {
+    renameButton.disabled = false;
+  }
+}
+
+/**
+ * 删除分组（带确认）
+ * @param {Object} group - 分组对象
+ * @param {HTMLElement} groupItem - 分组元素
+ * @param {HTMLElement} deleteButton - 触发按钮
+ * @param {Function} onUpdate - 更新回调
+ */
+async function handleDeleteGroup (group, groupItem, deleteButton, onUpdate) {
+  try {
+    deleteButton.disabled = true;
+
+    const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
+    const confirmMessage = hostsCount > 0
+      ? `确定要删除分组 "${group.name}" 吗？分组中的 ${hostsCount} 条规则都将被删除，代理规则会立即更新。`
+      : `确定要删除分组 "${group.name}" 吗？`;
+
+    const confirmed = await Modal.confirm('删除分组', confirmMessage, {
+      confirmText: '删除',
+      danger: true
+    });
+
+    if (!confirmed) {
+      deleteButton.disabled = false;
+      return;
+    }
+
+    groupItem.classList.add('deleting');
+
+    const success = await StateService.deleteGroup(group.id);
+
+    if (!success) {
+      groupItem.classList.remove('deleting');
+      deleteButton.disabled = false;
+      Message.error('删除分组失败，请重试');
+      return;
+    }
+
+    // 折叠动画后移除元素
+    groupItem.style.height = `${groupItem.offsetHeight}px`;
+    groupItem.style.opacity = '1';
+    groupItem.offsetHeight; // 触发重绘以启动动画
+
+    groupItem.style.height = '0';
+    groupItem.style.opacity = '0';
+    groupItem.style.padding = '0';
+    groupItem.style.margin = '0';
+    groupItem.style.overflow = 'hidden';
+
+    setTimeout(() => {
+      if (groupItem.parentNode) {
+        groupItem.parentNode.removeChild(groupItem);
+      }
+
+      if (onUpdate) {
+        onUpdate(group.id, 'deleted');
+      }
+
+      const successMessage = hostsCount > 0
+        ? `分组 "${group.name}" 及其 ${hostsCount} 条规则已删除，代理规则已更新`
+        : `分组 "${group.name}" 已删除`;
+      Message.success(successMessage);
+    }, 300);
+  } catch (error) {
+    console.error('删除分组失败:', error);
+    groupItem.classList.remove('deleting');
+    deleteButton.disabled = false;
+    Message.error('删除分组失败：' + error.message);
   }
 }
 
@@ -270,7 +410,6 @@ function renderHosts (group, container, onUpdate) {
               await updateHostsList(group.id, container, onUpdate);
             } else if (typeof actionOrUpdatedHost === 'object') {
               // 对象类型的主机更新，可能需要特殊处理
-              // 例如：编辑操作返回的修改后主机对象
             } else if (actionOrUpdatedHost === 'toggled') {
               // 主机启用/禁用状态切换，更新分组头部的统计信息
               updateGroupStats(group.id, container);
@@ -346,7 +485,7 @@ async function updateGroupStats (groupId, container) {
     const groupItem = container.closest('.group-item');
     if (!groupItem) return;
 
-    const hostsCountTag = groupItem.querySelector('.group-header .status-tag:nth-child(3)');
+    const hostsCountTag = groupItem.querySelector('.hosts-count-tag');
     if (hostsCountTag) {
       const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
       const enabledCount = Array.isArray(group.hosts) ? group.hosts.filter(h => h.enabled).length : 0;
@@ -462,159 +601,5 @@ async function updateHostsList (groupId, container, onUpdate) {
     } catch (e) {
       // 忽略消息组件失败的错误
     }
-  }
-}
-
-/**
- * 创建分组操作按钮
- * @param {Object} group - 分组对象
- * @param {HTMLElement} groupItem - 分组元素
- * @param {Function} onUpdate - 更新回调
- * @returns {HTMLElement} - 操作按钮容器
- */
-function createGroupActions (group, groupItem, onUpdate) {
-  try {
-    const actionButtons = document.createElement('div');
-    actionButtons.className = 'form-actions';
-    actionButtons.style.marginTop = '24px';
-
-    // 重命名按钮
-    const editButton = document.createElement('button');
-    editButton.className = 'button button-default';
-    editButton.textContent = '重命名';
-    editButton.addEventListener('click', async (e) => {
-      e.stopPropagation();
-
-      try {
-        // 禁用按钮，防止重复点击
-        editButton.disabled = true;
-
-        const newName = await Modal.prompt('重命名分组', '输入新的分组名称:', group.name);
-        if (newName && newName.trim()) {
-          // 显示处理中状态
-          editButton.textContent = '处理中...';
-
-          // 使用 StateService 更新分组名称
-          const success = await StateService.updateGroup(group.id, { name: newName.trim() });
-          if (success) {
-            // 本地更新分组名称
-            const groupName = groupItem.querySelector('.group-name');
-            if (groupName) {
-              groupName.textContent = newName.trim();
-            }
-
-            // 通知上层组件
-            if (onUpdate) {
-              onUpdate(group.id, 'renamed');
-            }
-
-            // 显示成功消息
-            Message.success('分组重命名成功');
-          } else {
-            Message.error('重命名分组失败，可能存在同名分组');
-          }
-        }
-      } catch (error) {
-        console.error('重命名分组失败:', error);
-        Message.error('重命名分组失败，请重试');
-      } finally {
-        // 恢复按钮状态
-        editButton.disabled = false;
-        editButton.textContent = '重命名';
-      }
-    });
-
-    // 删除按钮
-    const deleteButton = document.createElement('button');
-    deleteButton.className = 'button button-danger';
-    deleteButton.textContent = '删除分组';
-    deleteButton.addEventListener('click', async (e) => {
-      e.stopPropagation();
-
-      try {
-        // 禁用按钮，防止重复点击
-        deleteButton.disabled = true;
-
-        const hostsCount = Array.isArray(group.hosts) ? group.hosts.length : 0;
-        const confirmMessage = hostsCount > 0
-          ? `确定要删除分组 "${group.name}" 吗？分组中的 ${hostsCount} 条规则都将被删除，网络请求规则也会立即更新。`
-          : `确定要删除分组 "${group.name}" 吗？`;
-
-        const confirmed = await Modal.confirm('删除分组', confirmMessage);
-
-        if (confirmed) {
-          // 显示处理中状态
-          deleteButton.textContent = '删除中...';
-
-          // 添加删除中状态
-          groupItem.classList.add('deleting');
-
-          // 使用 StateService 删除分组
-          const success = await StateService.deleteGroup(group.id);
-
-          if (!success) {
-            groupItem.classList.remove('deleting');
-            deleteButton.textContent = '删除分组';
-            deleteButton.disabled = false;
-            Message.error('删除分组失败，请重试');
-            return;
-          }
-
-          // 添加动画效果
-          groupItem.style.height = `${groupItem.offsetHeight}px`;
-          groupItem.style.opacity = '1';
-
-          // 触发重绘以启动动画
-          groupItem.offsetHeight;
-
-          // 应用删除动画
-          groupItem.style.height = '0';
-          groupItem.style.opacity = '0';
-          groupItem.style.padding = '0';
-          groupItem.style.margin = '0';
-          groupItem.style.overflow = 'hidden';
-
-          // 动画完成后移除元素
-          setTimeout(() => {
-            // 从DOM中移除分组元素
-            if (groupItem.parentNode) {
-              groupItem.parentNode.removeChild(groupItem);
-            }
-
-            // 通知上层组件
-            if (onUpdate) {
-              onUpdate(group.id, 'deleted');
-            }
-
-            // 显示成功消息
-            const successMessage = hostsCount > 0
-              ? `分组 "${group.name}" 及其 ${hostsCount} 条规则已删除，代理规则已更新`
-              : `分组 "${group.name}" 已删除`;
-            Message.success(successMessage);
-          }, 300);
-        } else {
-          // 用户取消，恢复按钮状态
-          deleteButton.disabled = false;
-        }
-      } catch (error) {
-        console.error('删除分组失败:', error);
-        groupItem.classList.remove('deleting');
-        deleteButton.textContent = '删除分组';
-        deleteButton.disabled = false;
-        Message.error('删除分组失败：' + error.message);
-      }
-    });
-
-    actionButtons.appendChild(editButton);
-    actionButtons.appendChild(deleteButton);
-
-    return actionButtons;
-  } catch (error) {
-    console.error('创建分组操作按钮失败:', error);
-    // 返回一个基本容器，避免UI完全失败
-    const errorContainer = document.createElement('div');
-    errorContainer.className = 'form-actions error';
-    errorContainer.textContent = '加载操作按钮失败';
-    return errorContainer;
   }
 }
