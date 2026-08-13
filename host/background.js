@@ -3,6 +3,17 @@
  * Handles hosts mapping using PAC script and proxy configuration
  */
 
+import {
+  areProxyStoresEqual,
+  createProxyProfileId,
+  isSafeProxyProfile,
+  isUsableProxyProfile,
+  normalizeProxyProfile,
+  normalizeProxyStore,
+  resolveActiveProxy,
+  SUPPORTED_PROXY_PROTOCOLS
+} from './js/utils/ProxyStore.js';
+
 // Constants
 const CONSTANTS = {
   PROXY_UPDATE_THROTTLE: 300,
@@ -44,9 +55,13 @@ const state = {
     lastUpdateTime: 0,
     updateQueue: [],
     errorCount: 0,
-    clearTimeout: null
+    lastErrorTime: 0,
+    clearTimeout: null,
+    rerunRequested: false,
+    applyPending: false
   },
   updateThrottleTimer: null,
+  proxyRetryTimer: null,
   lastConfigHash: null
 };
 
@@ -56,6 +71,14 @@ let keepAliveInterval = null;
 // Guards to keep initialization idempotent across activate/onInstalled/onStartup
 let initialized = false;
 let storageListenerAttached = false;
+
+// Serialize profile mutations so concurrent popup/settings writes cannot
+// overwrite each other after an asynchronous storage read.
+let proxyStoreMutationQueue = Promise.resolve();
+const proxyStoreRequestResults = new Map();
+const proxyStoreInFlightRequests = new Map();
+const MAX_PROXY_REQUEST_RESULTS = 100;
+const MAX_PROXY_PROFILES = 100;
 
 // startKeepAlive function to keep Service Worker alive
 function startKeepAlive() {
@@ -112,7 +135,9 @@ async function initializeExtension() {
 // Load initial state from storage
 async function loadInitialState() {
   try {
-    const data = await getStorageData(['hostsGroups', 'activeGroups', 'socketProxy']);
+    const data = await getStorageData(['hostsGroups', 'activeGroups', 'socketProxyStore', 'socketProxy']);
+
+    await ensureProxyStore(data);
 
     state.activeGroups = data.activeGroups || [];
 
@@ -172,10 +197,10 @@ function setupStorageListener() {
 
   chrome.storage.onChanged.addListener((changes) => {
     debugLog('[Storage] Changes detected:', Object.keys(changes));
-    if (changes.socketProxy) {
+    if (changes.socketProxy || changes.socketProxyStore) {
       debugLog('[Storage] socketProxy changed:', {
-        oldBypassList: changes.socketProxy.oldValue?.bypassList,
-        newBypassList: changes.socketProxy.newValue?.bypassList
+        oldBypassList: changes.socketProxy?.oldValue?.bypassList,
+        newBypassList: changes.socketProxy?.newValue?.bypassList
       });
     }
     if (shouldUpdateHostsMap(changes)) {
@@ -194,9 +219,19 @@ function setupMessageListener() {
 
 // Unified message handling function
 function handleMessage(message, sender, sendResponse) {
+  if (!message || typeof message !== 'object' || typeof message.action !== 'string') {
+    sendResponse({ success: false, error: 'Invalid message' });
+    return false;
+  }
+
   // Immediately return true to indicate asynchronous response
   if (message.action === 'updateProxySettings') {
     handleUpdateProxyMessage(message, sender, sendResponse);
+    return true;
+  }
+
+  if (isProxyStoreAction(message.action)) {
+    handleProxyStoreMessage(message, sendResponse);
     return true;
   }
 
@@ -221,7 +256,7 @@ async function handleUpdateProxyMessage(message, sender, sendResponse) {
 
 // Check if storage changes require hosts map update
 function shouldUpdateHostsMap(changes) {
-  return changes.hostsGroups || changes.activeGroups || changes.socketProxy;
+  return changes.hostsGroups || changes.activeGroups || changes.socketProxyStore;
 }
 
 // Throttled update hosts map
@@ -240,32 +275,57 @@ function throttledUpdateHostsMap() {
 // Update active hosts map
 async function updateActiveHostsMap() {
   if (state.proxyState.updating) {
+    state.proxyState.rerunRequested = true;
     return enqueueUpdate();
   }
 
   state.proxyState.updating = true;
-  state.proxyState.lastUpdateTime = Date.now();
 
   try {
-    const data = await getStorageData(['hostsGroups', 'activeGroups']);
+    do {
+      state.proxyState.rerunRequested = false;
+      const data = await getStorageData(['hostsGroups', 'activeGroups']);
 
-    const built = buildActiveHostsMap(data);
-    state.activeHostsMap = built.hostsMap;
-    state.activeRuleMeta = built.ruleMeta;
-    state.activeGroups = data.activeGroups || [];
+      const built = buildActiveHostsMap(data);
+      state.activeHostsMap = built.hostsMap;
+      state.activeRuleMeta = built.ruleMeta;
+      state.activeGroups = data.activeGroups || [];
 
-    await updateProxySettings();
+      await updateProxySettings();
+    } while (state.proxyState.rerunRequested);
 
+    state.proxyState.applyPending = false;
     processUpdateQueue(true);
 
     // Keep per-tab IP indicators in sync with the new mapping
     refreshActiveTabIndicators();
   } catch (error) {
+    state.proxyState.applyPending = true;
     processUpdateQueue(false, error);
     throw error;
   } finally {
     state.proxyState.updating = false;
+    // A request can arrive after the loop condition (or while a failed apply
+    // is unwinding) but before the updating flag is cleared. Always schedule
+    // a fresh pass so the latest persisted state is not left unapplied.
+    if (state.proxyState.rerunRequested) {
+      state.proxyState.rerunRequested = false;
+      updateActiveHostsMap().catch(error => {
+        console.error('Failed to process queued hosts mapping update:', error);
+      });
+    }
   }
+}
+
+function scheduleProxyRetry(delay = CONSTANTS.PROXY_UPDATE_THROTTLE) {
+  if (state.proxyRetryTimer) clearTimeout(state.proxyRetryTimer);
+  state.proxyRetryTimer = setTimeout(() => {
+    state.proxyRetryTimer = null;
+    updateActiveHostsMap().catch(error => {
+      console.error('Failed to retry proxy settings:', error);
+      scheduleProxyRetry(CONSTANTS.ERROR_RESET_TIME);
+    });
+  }, delay);
 }
 
 // Build active hosts map from storage data.
@@ -312,12 +372,6 @@ function processUpdateQueue(success, error) {
 
 // Update Chrome proxy settings
 async function updateProxySettings() {
-  if (!shouldContinueUpdate()) {
-    return;
-  }
-
-  state.proxyState.lastUpdateTime = Date.now();
-
   try {
     const socketProxy = await getSocketProxyConfig();
     state.lastSocketProxy = socketProxy;
@@ -333,8 +387,17 @@ async function updateProxySettings() {
     // If neither hosts nor socket proxy is active, clear proxy immediately
     if (!hasActiveHosts && !hasSocketProxy) {
       await forceClearProxySettings();
+      state.proxyState.errorCount = 0;
+      state.proxyState.lastErrorTime = 0;
+      if (state.proxyRetryTimer) {
+        clearTimeout(state.proxyRetryTimer);
+        state.proxyRetryTimer = null;
+      }
       return;
     }
+
+    assertProxyUpdateAllowed();
+    state.proxyState.lastUpdateTime = Date.now();
 
     const config = generateProxyConfig(state.activeHostsMap, socketProxy);
 
@@ -351,6 +414,12 @@ async function updateProxySettings() {
     });
 
     if (!configChanged) {
+      state.proxyState.errorCount = 0;
+      state.proxyState.lastErrorTime = 0;
+      if (state.proxyRetryTimer) {
+        clearTimeout(state.proxyRetryTimer);
+        state.proxyRetryTimer = null;
+      }
       return;
     }
 
@@ -364,11 +433,19 @@ async function updateProxySettings() {
     await applyProxyConfig(config);
     state.currentConfig = config;
     state.lastConfigHash = configHash;
+    state.proxyState.errorCount = 0;
+    state.proxyState.lastErrorTime = 0;
+    if (state.proxyRetryTimer) {
+      clearTimeout(state.proxyRetryTimer);
+      state.proxyRetryTimer = null;
+    }
 
     debugLog('[Proxy] Config applied successfully, bypassList:', socketProxy.bypassList);
 
   } catch (error) {
-    handleProxyError(error);
+    if (!error.proxyUpdatePaused) {
+      handleProxyError(error);
+    }
     throw error;
   }
 }
@@ -441,24 +518,50 @@ function safeJsonStringify(obj) {
 }
 
 // Check if update should continue based on error count
-function shouldContinueUpdate() {
+function assertProxyUpdateAllowed() {
   const now = Date.now();
 
   if (state.proxyState.errorCount >= CONSTANTS.MAX_ERROR_COUNT) {
-    if (now - state.proxyState.lastUpdateTime < CONSTANTS.ERROR_RESET_TIME) {
+    if (now - state.proxyState.lastErrorTime < CONSTANTS.ERROR_RESET_TIME) {
       console.warn('Proxy update error count is too high, pausing updates');
-      return false;
+      const error = new Error('代理规则更新暂时暂停，将稍后重试');
+      error.proxyUpdatePaused = true;
+      throw error;
     }
     state.proxyState.errorCount = 0;
   }
-
-  return true;
 }
 
 // Get socket proxy configuration
 async function getSocketProxyConfig() {
-  const result = await getStorageData(['socketProxy']);
+  const result = await getStorageData(['socketProxyStore', 'socketProxy']);
+  if (result.socketProxyStore) {
+    return resolveActiveProxy(normalizeProxyStore(result.socketProxyStore));
+  }
   return result.socketProxy || CONSTANTS.DEFAULT_PROXY_CONFIG;
+}
+
+async function getSocketProxyStore() {
+  const result = await getStorageData(['socketProxyStore', 'socketProxy']);
+  return normalizeProxyStore(result.socketProxyStore, result.socketProxy);
+}
+
+async function ensureProxyStore(data) {
+  if (data.socketProxyStore) return normalizeProxyStore(data.socketProxyStore);
+
+  const result = await enqueueProxyStoreMutation(
+    async store => {
+      const latest = await getStorageData(['socketProxyStore']);
+      return {
+        socketProxyStore: latest.socketProxyStore
+          ? normalizeProxyStore(latest.socketProxyStore)
+          : store,
+        forcePersist: !latest.socketProxyStore
+      };
+    },
+    { updateProxy: false }
+  );
+  return result.socketProxyStore;
 }
 
 // Generate proxy configuration
@@ -753,6 +856,7 @@ function buildPacScriptContent({ hostsJson, socksEnabled, proxyString, bypassExa
 // Handle proxy update errors
 function handleProxyError(error) {
   state.proxyState.errorCount++;
+  state.proxyState.lastErrorTime = Date.now();
 
   if (state.proxyState.errorCount >= CONSTANTS.MAX_ERROR_COUNT) {
     const resetTime = CONSTANTS.ERROR_RESET_TIME / 1000;
@@ -865,6 +969,237 @@ function isConfiguredProxyChallenge(challenger, socketProxy) {
     challengerHost === configuredHost &&
     Number.isInteger(challengerPort) &&
     challengerPort === configuredPort;
+}
+
+function isProxyStoreAction(action) {
+  return [
+    'getProxyStore',
+    'createProxyProfile',
+    'updateProxyProfile',
+    'deleteProxyProfile',
+    'setActiveProxyProfile',
+    'setProxyEnabled',
+    'replaceProxyStore'
+  ].includes(action);
+}
+
+async function handleProxyStoreMessage(message, sendResponse) {
+  try {
+    if (message.action === 'getProxyStore') {
+      const data = await getStorageData(['socketProxyStore', 'socketProxy']);
+      const store = await ensureProxyStore(data);
+      sendResponse({ success: true, socketProxyStore: store });
+      return;
+    }
+
+    const requestId = typeof message.requestId === 'string' ? message.requestId : '';
+    if (requestId && proxyStoreRequestResults.has(requestId)) {
+      sendResponse({ success: true, ...proxyStoreRequestResults.get(requestId) });
+      return;
+    }
+
+    let operation = requestId ? proxyStoreInFlightRequests.get(requestId) : null;
+    if (!operation) {
+      operation = enqueueProxyStoreMutation(store => mutateProxyStore(store, message));
+      if (requestId) proxyStoreInFlightRequests.set(requestId, operation);
+    }
+    const result = await operation;
+    if (requestId) {
+      proxyStoreInFlightRequests.delete(requestId);
+      proxyStoreRequestResults.set(requestId, result);
+      if (proxyStoreRequestResults.size > MAX_PROXY_REQUEST_RESULTS) {
+        proxyStoreRequestResults.delete(proxyStoreRequestResults.keys().next().value);
+      }
+    }
+    sendResponse({ success: true, ...result });
+  } catch (error) {
+    if (typeof message?.requestId === 'string') {
+      proxyStoreInFlightRequests.delete(message.requestId);
+    }
+    console.error('Failed to update proxy profiles:', error);
+    sendResponse({ success: false, error: error.message || 'Unknown error occurred' });
+  }
+}
+
+function enqueueProxyStoreMutation(mutation, options = {}) {
+  const operation = proxyStoreMutationQueue.then(async () => {
+    const store = await getSocketProxyStore();
+    const result = await mutation(store);
+    const nextStore = normalizeProxyStore(result.socketProxyStore);
+    const socketProxy = resolveActiveProxy(nextStore);
+    const changed = !areProxyStoresEqual(store, nextStore);
+
+    if (result.persist !== false && (changed || result.forcePersist)) {
+      await setStorageData({ socketProxyStore: nextStore, socketProxy });
+    }
+    let applied = options.updateProxy === false || !state.proxyState.applyPending;
+    let warning = null;
+    if (options.updateProxy !== false && (changed || state.proxyState.applyPending)) {
+      try {
+        await updateActiveHostsMap();
+      } catch (error) {
+        // The mutation is already committed. Report the apply failure without
+        // rejecting, otherwise MessageBridge retries a write that succeeded.
+        applied = false;
+        warning = '配置已保存，但代理规则暂未应用';
+        scheduleProxyRetry();
+      }
+    }
+
+    return {
+      ...result,
+      socketProxyStore: nextStore,
+      socketProxy,
+      committed: true,
+      applied,
+      warning
+    };
+  });
+
+  proxyStoreMutationQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+function mutateProxyStore(store, message) {
+  switch (message.action) {
+    case 'createProxyProfile': {
+      if (!message.profile || typeof message.profile !== 'object') {
+        throw new Error('代理配置不能为空');
+      }
+      assertSupportedProtocol(message.profile);
+      const profile = normalizeProxyProfile({
+        ...(message.profile || {}),
+        id: message.profile?.id || createProxyProfileId()
+      });
+      if (!isSafeProxyProfile(profile)) {
+        throw new Error('代理配置内容无效');
+      }
+      const existing = store.profiles.find(item => item.id === profile.id);
+      if (existing) {
+        // MessageBridge may retry after a response is lost. Treat an identical
+        // create request as success so retries cannot report a false failure.
+        if (JSON.stringify(existing) === JSON.stringify(profile)) {
+          return { profile: existing, socketProxyStore: store };
+        }
+        throw new Error('代理配置 ID 已存在');
+      }
+      if (store.profiles.length >= MAX_PROXY_PROFILES) {
+        throw new Error(`代理配置不能超过 ${MAX_PROXY_PROFILES} 个`);
+      }
+
+      const activate = !!message.activate || store.activeProfileId === null;
+      if (activate && store.enabled && !isUsableProxyProfile(profile)) {
+        throw new Error('启用代理时不能选择未完成的配置');
+      }
+      return {
+        profile,
+        socketProxyStore: {
+          ...store,
+          activeProfileId: activate ? profile.id : store.activeProfileId,
+          profiles: [...store.profiles, profile]
+        }
+      };
+    }
+
+    case 'updateProxyProfile': {
+      const profileId = String(message.profileId || '');
+      if (!profileId || !message.updates || typeof message.updates !== 'object') {
+        throw new Error('代理配置更新参数无效');
+      }
+      assertSupportedProtocol(message.updates, true);
+      const index = store.profiles.findIndex(profile => profile.id === profileId);
+      if (index === -1) throw new Error('未找到代理配置');
+
+      const current = store.profiles[index];
+      const updated = normalizeProxyProfile({
+        ...current,
+        ...(message.updates || {}),
+        id: current.id,
+        auth: { ...current.auth, ...(message.updates?.auth || {}) }
+      });
+      if (!isSafeProxyProfile(updated)) {
+        throw new Error('代理配置内容无效');
+      }
+      const profiles = [...store.profiles];
+      profiles[index] = updated;
+      if (store.enabled && store.activeProfileId === profileId && !isUsableProxyProfile(updated)) {
+        throw new Error('当前代理配置的主机或端口无效');
+      }
+      return { profile: updated, socketProxyStore: { ...store, profiles } };
+    }
+
+    case 'deleteProxyProfile': {
+      const profileId = String(message.profileId || '');
+      if (!profileId) throw new Error('代理配置 ID 不能为空');
+      const isActive = store.activeProfileId === profileId;
+      return {
+        socketProxyStore: {
+          ...store,
+          enabled: isActive ? false : store.enabled,
+          activeProfileId: isActive ? null : store.activeProfileId,
+          profiles: store.profiles.filter(profile => profile.id !== profileId)
+        }
+      };
+    }
+
+    case 'setActiveProxyProfile': {
+      const profileId = String(message.profileId || '');
+      const profile = store.profiles.find(item => item.id === profileId);
+      if (!profile) {
+        throw new Error('未找到代理配置');
+      }
+      if (store.enabled && !isUsableProxyProfile(profile)) {
+        throw new Error('启用代理时不能选择未完成的配置');
+      }
+      return { socketProxyStore: { ...store, activeProfileId: profileId } };
+    }
+
+    case 'setProxyEnabled': {
+      if (typeof message.enabled !== 'boolean') {
+        throw new Error('代理开关参数无效');
+      }
+      const enabled = !!message.enabled;
+      const activeProfile = store.profiles.find(profile => profile.id === store.activeProfileId);
+      if (enabled && !activeProfile) {
+        throw new Error('请先选择代理配置');
+      }
+      if (enabled && !isUsableProxyProfile(activeProfile)) {
+        throw new Error('当前代理配置的主机或端口无效');
+      }
+      return { socketProxyStore: { ...store, enabled } };
+    }
+
+    case 'replaceProxyStore': {
+      const rawProfiles = message.socketProxyStore?.profiles;
+      if (!Array.isArray(rawProfiles)) {
+        throw new Error('代理配置仓库格式无效');
+      }
+      if (rawProfiles.length > MAX_PROXY_PROFILES) {
+        throw new Error(`代理配置不能超过 ${MAX_PROXY_PROFILES} 个`);
+      }
+      rawProfiles.forEach(profile => assertSupportedProtocol(profile));
+      const nextStore = normalizeProxyStore(message.socketProxyStore);
+      if (nextStore.profiles.some(profile => !isSafeProxyProfile(profile))) {
+        throw new Error('代理配置内容无效');
+      }
+      const activeProfile = nextStore.profiles.find(profile => profile.id === nextStore.activeProfileId);
+      if (nextStore.enabled && !isUsableProxyProfile(activeProfile)) {
+        throw new Error('当前代理配置的主机或端口无效');
+      }
+      return { socketProxyStore: nextStore };
+    }
+
+    default:
+      throw new Error('Unknown proxy store action');
+  }
+}
+
+function assertSupportedProtocol(profile, optional = false) {
+  if (optional && profile.protocol === undefined) return;
+  if (typeof profile.protocol !== 'string' ||
+    !SUPPORTED_PROXY_PROTOCOLS.has(profile.protocol.trim().toUpperCase())) {
+    throw new Error('代理协议不受支持');
+  }
 }
 
 // ---------------------------------------------------------------------------

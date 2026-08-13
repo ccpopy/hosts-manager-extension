@@ -296,10 +296,10 @@ export default class App {
     // 安全地读取版本号，如果获取失败则使用默认值
     try {
       const manifest = chrome.runtime.getManifest();
-      versionInfo.textContent = `v${manifest.version || '1.1.0'}`;
+      versionInfo.textContent = `v${manifest.version || '1.2.0'}`;
     } catch (error) {
       console.warn('获取版本信息失败:', error);
-      versionInfo.textContent = 'v1.1.0';
+      versionInfo.textContent = 'v1.2.0';
     }
 
     title.appendChild(wordmark);
