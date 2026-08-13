@@ -3,10 +3,24 @@ import ProxyService from '../services/ProxyService.js';
 import Modal from '../components/Modal.js';
 import { createNotice } from '../components/Notice.js';
 import { Message } from '../utils/MessageUtils.js';
-import { parseHostRule, normalizeHostRule } from '../utils/ValidationUtils.js';
+import {
+  parseHostRule,
+  normalizeHostRule,
+  isValidIpAddress,
+  isValidDomain,
+  normalizeBypassRule
+} from '../utils/ValidationUtils.js';
 
 // 预览显示的最大行数
 const PREVIEW_MAX_ROWS = 50;
+const MAX_PROXY_PROFILES = 100;
+const MAX_PROXY_ID_LENGTH = 128;
+const MAX_PROXY_NAME_LENGTH = 50;
+const MAX_PROXY_HOST_LENGTH = 253;
+const MAX_PROXY_AUTH_LENGTH = 1024;
+const MAX_PROXY_BYPASS_RULES = 1000;
+const MAX_PROXY_BYPASS_LENGTH = 253;
+const SUPPORTED_PROXY_PROTOCOLS = new Set(['SOCKS5', 'SOCKS4', 'SOCKS', 'HTTP', 'HTTPS']);
 
 export default class ImportPage {
   constructor(container) {
@@ -21,7 +35,7 @@ export default class ImportPage {
       // 当分组变化时重新渲染
       this.renderGroupSelect(state.hostsGroups);
       this.renderExportGroupSelect(state.hostsGroups);
-      this.updateExportProxyHint(state.socketProxy);
+      this.updateExportProxyHint(state.socketProxyStore, state.socketProxy);
     });
   }
 
@@ -48,7 +62,7 @@ export default class ImportPage {
 
     // 提示信息
     const importNotice = createNotice(
-      '批量导入、导出 Hosts 规则。导入支持文本粘贴与文件上传（.txt / .json）；JSON 导出可包含完整分组与 Socket 代理设置，便于在设备之间迁移。',
+      '批量导入、导出 Hosts 规则。导入支持文本粘贴与文件上传（.txt / .json）；JSON 导出可包含完整分组与多套 Socket 代理设置，便于在设备之间迁移。',
       'info',
       `<svg class="notice-icon" fill="currentColor" viewBox="0 0 20 20">
         <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -595,7 +609,7 @@ export default class ImportPage {
 
     const exportInstructions = document.createElement('p');
     exportInstructions.className = 'instruction';
-    exportInstructions.textContent = '选择要导出的分组和格式。JSON 格式可用于完整备份，并可选择把 Socket 代理设置一并导出。';
+    exportInstructions.textContent = '选择要导出的分组和格式。JSON 格式可用于完整备份，并可选择把多套 Socket 代理设置一并导出。';
     exportSection.appendChild(exportInstructions);
 
     // 导出分组选择
@@ -729,7 +743,9 @@ export default class ImportPage {
     // 默认导出格式是纯文本，此时该选项不可用
     this.includeProxyCheckbox.disabled = true;
     this.includeProxyCheckbox.addEventListener('change', () => {
-      this.updateExportProxyHint(StateService.getState().socketProxy);
+      const currentState = StateService.getState();
+      this.updateExportProxyControls();
+      this.updateExportProxyHint(currentState.socketProxyStore, currentState.socketProxy);
     });
 
     const includeProxySlider = document.createElement('span');
@@ -750,11 +766,51 @@ export default class ImportPage {
     this.includeProxyOption = includeProxyOption;
     includeProxyOption.classList.add('option-disabled');
 
+    // 默认不导出代理账号密码，避免备份文件意外泄露凭据
+    const includeProxyCredentialsOption = document.createElement('div');
+    includeProxyCredentialsOption.className = 'form-row option-disabled';
+    includeProxyCredentialsOption.style.alignItems = 'center';
+    includeProxyCredentialsOption.style.marginTop = '12px';
+
+    const includeProxyCredentialsLabel = document.createElement('label');
+    includeProxyCredentialsLabel.textContent = '包含代理密码:';
+    includeProxyCredentialsLabel.style.marginBottom = '0';
+    includeProxyCredentialsLabel.style.marginRight = '12px';
+
+    const includeProxyCredentialsToggle = document.createElement('label');
+    includeProxyCredentialsToggle.className = 'toggle-switch';
+
+    this.includeProxyCredentialsCheckbox = document.createElement('input');
+    this.includeProxyCredentialsCheckbox.type = 'checkbox';
+    this.includeProxyCredentialsCheckbox.checked = false;
+    this.includeProxyCredentialsCheckbox.disabled = true;
+    this.includeProxyCredentialsCheckbox.addEventListener('change', () => {
+      const currentState = StateService.getState();
+      this.updateExportProxyHint(currentState.socketProxyStore, currentState.socketProxy);
+    });
+
+    const includeProxyCredentialsSlider = document.createElement('span');
+    includeProxyCredentialsSlider.className = 'slider';
+
+    includeProxyCredentialsToggle.appendChild(this.includeProxyCredentialsCheckbox);
+    includeProxyCredentialsToggle.appendChild(includeProxyCredentialsSlider);
+
+    const includeProxyCredentialsNote = document.createElement('span');
+    includeProxyCredentialsNote.className = 'option-note';
+    includeProxyCredentialsNote.textContent = '默认不包含，避免泄露';
+
+    includeProxyCredentialsOption.appendChild(includeProxyCredentialsLabel);
+    includeProxyCredentialsOption.appendChild(includeProxyCredentialsToggle);
+    includeProxyCredentialsOption.appendChild(includeProxyCredentialsNote);
+    exportOptions.appendChild(includeProxyCredentialsOption);
+
+    this.includeProxyCredentialsOption = includeProxyCredentialsOption;
+
     // 代理密码明文提示
     this.exportProxyHint = document.createElement('p');
     this.exportProxyHint.className = 'field-hint export-proxy-hint';
     this.exportProxyHint.style.display = 'none';
-    this.exportProxyHint.textContent = '注意：导出文件将以明文包含代理账号密码，请妥善保管。';
+    this.exportProxyHint.textContent = '注意：导出文件将以明文包含代理密码，请妥善保管。';
     exportOptions.appendChild(this.exportProxyHint);
 
     exportSection.appendChild(exportOptions);
@@ -766,7 +822,9 @@ export default class ImportPage {
       this.includeProxyCheckbox.disabled = isTextFormat;
       this.includeProxyNote.style.display = isTextFormat ? 'inline' : 'none';
       this.includeProxyOption.classList.toggle('option-disabled', isTextFormat);
-      this.updateExportProxyHint(StateService.getState().socketProxy);
+      this.updateExportProxyControls();
+      const currentState = StateService.getState();
+      this.updateExportProxyHint(currentState.socketProxyStore, currentState.socketProxy);
     });
 
     // 导出按钮
@@ -792,14 +850,33 @@ export default class ImportPage {
   /**
    * 根据当前状态更新“导出包含代理密码”提示的可见性
    */
-  updateExportProxyHint (socketProxy) {
+  updateExportProxyControls () {
+    if (!this.includeProxyCredentialsCheckbox || !this.exportFormatSelect || !this.includeProxyCheckbox) return;
+
+    const credentialsDisabled = this.exportFormatSelect.value !== 'json' || !this.includeProxyCheckbox.checked;
+    this.includeProxyCredentialsCheckbox.disabled = credentialsDisabled;
+    this.includeProxyCredentialsOption?.classList.toggle('option-disabled', credentialsDisabled);
+
+    if (credentialsDisabled) {
+      this.includeProxyCredentialsCheckbox.checked = false;
+    }
+  }
+
+  /**
+   * 根据当前状态更新“导出包含代理密码”提示的可见性
+   */
+  updateExportProxyHint (socketProxyStore, socketProxy) {
     if (!this.exportProxyHint || !this.includeProxyCheckbox || !this.exportFormatSelect) return;
 
     const isJson = this.exportFormatSelect.value === 'json';
     const includeProxy = this.includeProxyCheckbox.checked;
-    const hasPassword = !!(socketProxy && socketProxy.auth && socketProxy.auth.enabled && socketProxy.auth.password);
+    const includeCredentials = !!this.includeProxyCredentialsCheckbox?.checked;
+    const profiles = Array.isArray(socketProxyStore?.profiles) ? socketProxyStore.profiles : [];
+    const hasProfilePassword = profiles.some(profile => !!profile?.auth?.password);
+    const hasLegacyPassword = !!socketProxy?.auth?.password;
 
-    this.exportProxyHint.style.display = isJson && includeProxy && hasPassword ? 'block' : 'none';
+    this.exportProxyHint.style.display = isJson && includeProxy && includeCredentials &&
+      (hasProfilePassword || hasLegacyPassword) ? 'block' : 'none';
   }
 
   /**
@@ -930,8 +1007,12 @@ export default class ImportPage {
 
         addChip(`${groups.length} 个分组`, 'status-tag-success');
         addChip(`${ruleCount} 条规则`, 'status-tag-success');
-        if (jsonData.socketProxy) {
-          addChip('含 Socket 代理设置', 'status-tag-warning');
+        const importedProxyCount = Array.isArray(jsonData.socketProxyStore?.profiles)
+          ? jsonData.socketProxyStore.profiles.length
+          : (jsonData.socketProxy ? 1 : 0);
+        if (importedProxyCount > 0) {
+          addChip(`含 ${importedProxyCount} 个 Socket 代理配置`, 'status-tag-warning');
+          addChip('导入后保持关闭', 'status-tag-default');
         }
         if (jsonData.version) {
           addChip(`v${jsonData.version}`);
@@ -949,7 +1030,8 @@ export default class ImportPage {
     if (isJsonFormat) {
       try {
         const jsonData = JSON.parse(content);
-        const formatted = JSON.stringify(jsonData, null, 2);
+        const previewData = this.redactProxyCredentials(jsonData);
+        const formatted = JSON.stringify(previewData, null, 2);
         previewContent.textContent = formatted.substring(0, 1000) + (formatted.length > 1000 ? '\n...' : '');
       } catch {
         previewContent.textContent = '无效的JSON格式';
@@ -1148,7 +1230,8 @@ export default class ImportPage {
       }
 
       if (result.success) {
-        Message.success(result.message);
+        if (result.warning) Message.warning(result.message);
+        else Message.success(result.message);
 
         // 清除文件选择
         this.clearFileSelection();
@@ -1179,6 +1262,8 @@ export default class ImportPage {
       }
 
       const state = StateService.getState();
+      // 在写入 Hosts 前先验证代理数据；新版字段存在但损坏时不得静默回退到旧格式。
+      const importedProxyStore = this.extractImportedProxyStore(data);
       let totalImported = 0;
       let totalSkipped = 0;
       let groupsProcessed = 0;
@@ -1215,15 +1300,29 @@ export default class ImportPage {
             }
           }
 
-          // 文件中带有代理设置时一并应用
+          // 合并代理配置时保留当前启用状态和活动配置，仅追加无冲突配置。
           let proxyNote = '';
-          if (data.socketProxy) {
-            const proxyApplied = await StateService.updateSocketProxy(data.socketProxy);
-            proxyNote = proxyApplied ? '，Socket 代理设置已应用' : '，Socket 代理设置应用失败';
+          let proxyWarning = null;
+          if (importedProxyStore) {
+            const proxyResult = await this.mergeImportedProxyStore(importedProxyStore, state);
+            if (!proxyResult.success) {
+              return {
+                success: false,
+                message: `Hosts 已合并 ${totalImported} 条规则，但 Socket 代理配置导入失败，请重试`
+              };
+            }
+            proxyNote = proxyResult.success
+              ? `，导入 ${proxyResult.imported} 个代理配置${proxyResult.skipped ? `，跳过 ${proxyResult.skipped} 个冲突配置` : ''}，当前代理状态未改变`
+              : '';
+            if (proxyResult.success && proxyResult.applied === false) {
+              proxyWarning = proxyResult.warning || '代理规则暂未应用';
+              proxyNote += `；${proxyWarning}`;
+            }
           }
 
           return {
             success: true,
+            warning: proxyWarning,
             message: `合并完成：处理 ${groupsProcessed} 个分组，导入 ${totalImported} 条规则，跳过 ${totalSkipped} 条${proxyNote}`
           };
         }
@@ -1239,20 +1338,35 @@ export default class ImportPage {
             }))
           }));
 
-          // 替换所有数据
+          // 替换 Hosts 数据；代理配置通过 StateService 单独写入，以同步兼容快照和网络规则。
           await chrome.storage.local.set({
             hostsGroups: newGroups,
-            activeGroups: newGroups.map(g => g.id),
-            socketProxy: data.socketProxy
-              ? StateService.normalizeSocketProxyConfig(data.socketProxy)
-              : state.socketProxy
+            activeGroups: newGroups.map(g => g.id)
           });
 
           await StateService.forceRefresh();
 
-          const proxyNote = data.socketProxy ? '，Socket 代理设置已替换' : '';
+          let proxyNote = '';
+          let proxyWarning = null;
+          if (importedProxyStore) {
+            const proxyResult = await StateService.replaceSocketProxyStore(importedProxyStore, {
+              preserveEnabled: false
+            });
+            if (!proxyResult) {
+              return {
+                success: false,
+                message: 'Hosts 已完成替换，但 Socket 代理配置导入失败，请重试'
+              };
+            }
+            proxyNote = `，已导入 ${importedProxyStore.profiles.length} 个代理配置，代理保持关闭，请确认后手动启用`;
+            if (proxyResult.applied === false) {
+              proxyWarning = proxyResult.warning || '代理规则暂未应用';
+              proxyNote += `；${proxyWarning}`;
+            }
+          }
           return {
             success: true,
+            warning: proxyWarning,
             message: `替换完成：导入 ${newGroups.length} 个分组，共 ${newGroups.reduce((sum, g) => sum + g.hosts.length, 0)} 条规则${proxyNote}`
           };
         }
@@ -1282,7 +1396,7 @@ export default class ImportPage {
 
           const success = await StateService.addGroup(newGroup, true);
           if (success) {
-            const proxyNote = data.socketProxy ? '（该模式不导入 Socket 代理设置）' : '';
+            const proxyNote = importedProxyStore ? '（该模式不导入 Socket 代理设置）' : '';
             return {
               success: true,
               message: `创建新分组 "${newGroupName}"，导入 ${allHosts.length} 条规则${proxyNote}`
@@ -1294,8 +1408,201 @@ export default class ImportPage {
       }
 
     } catch (error) {
-      return { success: false, message: 'JSON解析失败: ' + error.message };
+      return { success: false, message: 'JSON导入失败: ' + error.message };
     }
+  }
+
+  /**
+   * 从导入文件读取并规范化代理配置。新版格式优先，旧版 socketProxy 仍可导入。
+   * 导入数据一律保持关闭，避免文件内容直接改变网络出口。
+   */
+  extractImportedProxyStore (data) {
+    const hasOwn = (key) => Object.prototype.hasOwnProperty.call(data, key);
+
+    if (hasOwn('socketProxyStore')) {
+      const rawStore = data.socketProxyStore;
+      if (!rawStore || typeof rawStore !== 'object' ||
+        rawStore.schemaVersion !== 2 || !Array.isArray(rawStore.profiles)) {
+        throw new Error('Socket 代理配置格式不正确或版本不受支持');
+      }
+      if (rawStore.profiles.length > MAX_PROXY_PROFILES) {
+        throw new Error(`Socket 代理配置不能超过 ${MAX_PROXY_PROFILES} 个`);
+      }
+      if (rawStore.activeProfileId !== null && rawStore.activeProfileId !== undefined &&
+        (typeof rawStore.activeProfileId !== 'string' ||
+          rawStore.activeProfileId.length > MAX_PROXY_ID_LENGTH)) {
+        throw new Error('Socket 代理活动配置 ID 格式不正确');
+      }
+      const ids = new Set();
+      const names = new Set();
+      rawStore.profiles.forEach(profile => {
+        const id = typeof profile?.id === 'string' ? profile.id.trim() : '';
+        const name = typeof profile?.name === 'string' ? profile.name.trim() : '';
+        const normalizedName = name.toLocaleLowerCase();
+        if (!id || id.length > MAX_PROXY_ID_LENGTH || !name) {
+          throw new Error('Socket 代理配置缺少 ID 或名称');
+        }
+        if ((profile.auth !== undefined &&
+          (!profile.auth || typeof profile.auth !== 'object' || Array.isArray(profile.auth))) ||
+          (profile.bypassList !== undefined && !Array.isArray(profile.bypassList))) {
+          throw new Error(`Socket 代理配置「${name}」的认证或绕过规则格式不正确`);
+        }
+        if (ids.has(id) || names.has(normalizedName)) {
+          throw new Error('Socket 代理配置中存在重复的 ID 或名称');
+        }
+        ids.add(id);
+        names.add(normalizedName);
+        this.validateImportedProxyProfile(profile, name);
+      });
+      return this.createSafeImportedProxyStore(
+        StateService.normalizeSocketProxyStore(rawStore),
+        rawStore.activeProfileId
+      );
+    }
+
+    if (hasOwn('socketProxy')) {
+      const legacyProxy = data.socketProxy;
+      if (!legacyProxy || typeof legacyProxy !== 'object') {
+        throw new Error('旧版 Socket 代理配置格式不正确');
+      }
+      const hasLegacyEndpoint = String(legacyProxy.host ?? '').trim() ||
+        String(legacyProxy.port ?? '').trim();
+      const hasLegacyDetails = legacyProxy.enabled || legacyProxy.auth?.enabled ||
+        legacyProxy.auth?.username || legacyProxy.auth?.password ||
+        (Array.isArray(legacyProxy.bypassList) && legacyProxy.bypassList.length > 0);
+      // 旧版扩展会导出一个完全空白的默认对象，它不代表实际代理配置。
+      if (!hasLegacyEndpoint && !hasLegacyDetails) return null;
+      this.validateImportedProxyProfile(legacyProxy, '默认代理', { legacy: true });
+      return this.createSafeImportedProxyStore(
+        StateService.normalizeSocketProxyStore(null, legacyProxy)
+      );
+    }
+
+    return null;
+  }
+
+  validateImportedProxyProfile (profile, displayName, options = {}) {
+    const label = `Socket 代理配置「${displayName}」`;
+    const name = options.legacy ? displayName : profile.name.trim();
+    const host = typeof profile.host === 'string' ? profile.host.trim() : '';
+    const port = typeof profile.port === 'number' || typeof profile.port === 'string'
+      ? String(profile.port).trim()
+      : '';
+    const protocol = typeof profile.protocol === 'string'
+      ? profile.protocol.trim().toUpperCase()
+      : '';
+
+    if (name.length > MAX_PROXY_NAME_LENGTH) {
+      throw new Error(`${label}的名称不能超过 ${MAX_PROXY_NAME_LENGTH} 个字符`);
+    }
+    if (!host || host.length > MAX_PROXY_HOST_LENGTH ||
+      (!isValidIpAddress(host) && !isValidDomain(host))) {
+      throw new Error(`${label}的代理主机格式不正确`);
+    }
+    if (!/^(?:[1-9]\d{0,4})$/.test(port) || Number(port) > 65535) {
+      throw new Error(`${label}的端口必须是 1-65535 之间的整数`);
+    }
+    if (!SUPPORTED_PROXY_PROTOCOLS.has(protocol)) {
+      throw new Error(`${label}的协议不受支持`);
+    }
+
+    const auth = profile.auth;
+    if (auth !== undefined && (!auth || typeof auth !== 'object' || Array.isArray(auth))) {
+      throw new Error(`${label}的认证格式不正确`);
+    }
+    if (auth) {
+      if (auth.username !== undefined && typeof auth.username !== 'string') {
+        throw new Error(`${label}的用户名格式不正确`);
+      }
+      if (auth.password !== undefined && typeof auth.password !== 'string') {
+        throw new Error(`${label}的密码格式不正确`);
+      }
+      if ((auth.username?.length || 0) > MAX_PROXY_AUTH_LENGTH ||
+        (auth.password?.length || 0) > MAX_PROXY_AUTH_LENGTH) {
+        throw new Error(`${label}的认证信息过长`);
+      }
+      if (auth.enabled && (!auth.username?.trim() || !auth.password)) {
+        throw new Error(`${label}已启用认证，请填写用户名和密码`);
+      }
+    }
+
+    const bypassList = profile.bypassList;
+    if (bypassList !== undefined && !Array.isArray(bypassList)) {
+      throw new Error(`${label}的绕过规则格式不正确`);
+    }
+    if ((bypassList?.length || 0) > MAX_PROXY_BYPASS_RULES) {
+      throw new Error(`${label}的绕过规则不能超过 ${MAX_PROXY_BYPASS_RULES} 条`);
+    }
+    (bypassList || []).forEach(rule => {
+      if (typeof rule !== 'string' || rule.length > MAX_PROXY_BYPASS_LENGTH ||
+        !normalizeBypassRule(rule)) {
+        throw new Error(`${label}包含无效的绕过规则`);
+      }
+    });
+  }
+
+  createSafeImportedProxyStore (store, requestedActiveProfileId) {
+    const profiles = Array.isArray(store?.profiles) ? store.profiles : [];
+    const candidateId = requestedActiveProfileId === undefined
+      ? store?.activeProfileId
+      : requestedActiveProfileId;
+    const activeProfileId = profiles.some(profile => profile.id === candidateId)
+      ? candidateId
+      : null;
+
+    return {
+      ...store,
+      schemaVersion: 2,
+      enabled: false,
+      activeProfileId,
+      profiles
+    };
+  }
+
+  async mergeImportedProxyStore (importedStore, state) {
+    const currentStore = StateService.normalizeSocketProxyStore(
+      state.socketProxyStore,
+      state.socketProxy
+    );
+    const profiles = [...currentStore.profiles];
+    const existingIds = new Set(profiles.map(profile => profile.id));
+    const existingNames = new Set(profiles.map(profile =>
+      String(profile.name || '').trim().toLocaleLowerCase()
+    ));
+    let imported = 0;
+    let skipped = 0;
+
+    importedStore.profiles.forEach(profile => {
+      const name = String(profile.name || '').trim().toLocaleLowerCase();
+      if (existingIds.has(profile.id) || existingNames.has(name)) {
+        skipped++;
+        return;
+      }
+      profiles.push(profile);
+      existingIds.add(profile.id);
+      existingNames.add(name);
+      imported++;
+    });
+
+    const hasActiveProfile = profiles.some(profile => profile.id === currentStore.activeProfileId);
+    const mergedStore = {
+      ...currentStore,
+      schemaVersion: 2,
+      enabled: !!currentStore.enabled && hasActiveProfile,
+      activeProfileId: hasActiveProfile ? currentStore.activeProfileId : null,
+      profiles
+    };
+    const result = await StateService.replaceSocketProxyStore(mergedStore, {
+      preserveEnabled: true
+    });
+
+    return {
+      success: !!result,
+      applied: result ? result.applied : false,
+      warning: result ? result.warning : null,
+      imported,
+      skipped
+    };
   }
 
   /**
@@ -1433,7 +1740,21 @@ export default class ImportPage {
       if (exportFormat === 'json') {
         // JSON格式导出
         const includeProxy = this.includeProxyCheckbox.checked;
-        const result = await this.exportAsJson(selectedGroupId, includeProxy);
+        const includeProxyCredentials = includeProxy && this.includeProxyCredentialsCheckbox.checked;
+        if (includeProxyCredentials && this.hasProxyPassword(StateService.getState())) {
+          const confirmed = await Modal.confirm(
+            '导出代理密码',
+            '导出文件将以明文包含代理密码。请确认保存位置安全，并避免将文件分享给他人。',
+            { confirmText: '继续导出' }
+          );
+          if (!confirmed) return;
+        }
+
+        const result = await this.exportAsJson(
+          selectedGroupId,
+          includeProxy,
+          includeProxyCredentials
+        );
         exportedContent = result.content;
         fileName = result.fileName;
         mimeType = 'application/json';
@@ -1492,8 +1813,9 @@ export default class ImportPage {
    * 导出为JSON格式
    * @param {string} groupId - 分组ID，空表示全部分组
    * @param {boolean} includeProxy - 是否包含 Socket 代理设置
+   * @param {boolean} includeProxyCredentials - 是否包含代理账号密码
    */
-  async exportAsJson (groupId, includeProxy = true) {
+  async exportAsJson (groupId, includeProxy = true, includeProxyCredentials = false) {
     const state = StateService.getState();
 
     let exportData;
@@ -1509,7 +1831,7 @@ export default class ImportPage {
       }
 
       exportData = {
-        version: `${manifest.version || '1.1.0'}`,
+        version: `${manifest.version || '1.2.0'}`,
         exportDate: new Date().toISOString(),
         type: 'single-group',
         hostsGroups: [group],
@@ -1520,7 +1842,7 @@ export default class ImportPage {
     } else {
       // 导出全部分组
       exportData = {
-        version: `${manifest.version || '1.1.0'}`,
+        version: `${manifest.version || '1.2.0'}`,
         exportDate: new Date().toISOString(),
         type: 'full-config',
         hostsGroups: state.hostsGroups,
@@ -1532,13 +1854,75 @@ export default class ImportPage {
 
     // 按需附带 Socket 代理设置
     if (includeProxy) {
-      exportData.socketProxy = state.socketProxy;
+      const socketProxyStore = StateService.normalizeSocketProxyStore(
+        state.socketProxyStore,
+        state.socketProxy
+      );
+      // 备份文件中的代理始终保持关闭，避免被其他消费者直接应用。
+      const exportStore = {
+        ...this.cloneProxyValue(socketProxyStore),
+        enabled: false
+      };
+      const activeProfile = exportStore.profiles.find(profile =>
+        profile.id === exportStore.activeProfileId
+      ) || null;
+      const legacyProxy = activeProfile
+        ? { ...this.cloneProxyValue(activeProfile), enabled: false }
+        : { ...this.cloneProxyValue(state.socketProxy || {}), enabled: false };
+
+      exportData.socketProxyStore = includeProxyCredentials
+        ? exportStore
+        : this.redactProxyCredentials(exportStore, { disableAuth: true });
+      // 兼容旧版扩展：附带当前配置快照，但始终保持关闭。
+      exportData.socketProxy = includeProxyCredentials
+        ? legacyProxy
+        : this.redactProxyCredentials(legacyProxy, { disableAuth: true });
+      exportData.proxyPasswordsIncluded = includeProxyCredentials && this.hasProxyPassword(state);
     }
 
     return {
       content: JSON.stringify(exportData, null, 2),
       fileName
     };
+  }
+
+  hasProxyPassword (state) {
+    const profiles = Array.isArray(state.socketProxyStore?.profiles)
+      ? state.socketProxyStore.profiles
+      : [];
+    return profiles.some(profile => !!profile?.auth?.password) ||
+      !!state.socketProxy?.auth?.password;
+  }
+
+  cloneProxyValue (value) {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(value);
+    }
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  /**
+   * 返回不含代理密码的深拷贝，可安全用于预览和默认导出。
+   */
+  redactProxyCredentials (value, options = {}) {
+    const cloned = this.cloneProxyValue(value);
+    const removePassword = proxy => {
+      if (proxy?.auth && typeof proxy.auth === 'object') {
+        delete proxy.auth.password;
+        if (options.disableAuth) proxy.auth.enabled = false;
+      }
+    };
+
+    removePassword(cloned?.socketProxy);
+    if (Array.isArray(cloned?.socketProxyStore?.profiles)) {
+      cloned.socketProxyStore.profiles.forEach(removePassword);
+    }
+    if (Array.isArray(cloned?.profiles)) {
+      cloned.profiles.forEach(removePassword);
+    }
+    removePassword(cloned);
+
+    return cloned;
   }
 
   /**
@@ -1578,6 +1962,8 @@ export default class ImportPage {
     this.includeDisabledCheckbox = null;
     this.includeGroupHeadersCheckbox = null;
     this.includeProxyCheckbox = null;
+    this.includeProxyCredentialsCheckbox = null;
+    this.includeProxyCredentialsOption = null;
     this.includeProxyNote = null;
     this.exportProxyHint = null;
     this.exportFormatSelect = null;

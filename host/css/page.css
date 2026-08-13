@@ -844,6 +844,426 @@ input:disabled + .slider {
   margin-top: 24px;
 }
 
+/* ---------- Proxy Profiles ---------- */
+.proxy-global-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--rounded-lg);
+  background: var(--gray-50);
+}
+
+.proxy-global-copy {
+  min-width: 0;
+}
+
+.proxy-global-title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.proxy-global-status {
+  color: var(--gray-500);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.proxy-global-status.enabled {
+  color: var(--pine-deep);
+}
+
+.proxy-global-switch {
+  width: 44px;
+  height: 24px;
+}
+
+.proxy-global-switch .slider::before {
+  width: 18px;
+  height: 18px;
+}
+
+.proxy-global-switch input:checked + .slider::before {
+  transform: translateX(20px);
+}
+
+.proxy-workspace {
+  display: grid;
+  grid-template-columns: 230px minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.proxy-profile-panel,
+.proxy-editor {
+  border: 1px solid var(--line);
+  border-radius: var(--rounded-xl);
+  background: white;
+}
+
+.proxy-profile-panel {
+  position: sticky;
+  top: 24px;
+  overflow: hidden;
+}
+
+.proxy-profile-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 14px 13px;
+  border-bottom: 1px solid var(--line);
+  background: var(--gray-50);
+}
+
+.proxy-panel-eyebrow {
+  color: var(--pine);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  line-height: 1.2;
+}
+
+.proxy-profile-count {
+  color: var(--gray-600);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.proxy-add-profile-button {
+  width: 32px;
+  height: 32px;
+  color: var(--pine);
+  border: 1px solid var(--gray-300);
+  background: white;
+}
+
+.proxy-add-profile-button:hover {
+  color: white;
+  border-color: var(--pine);
+  background: var(--pine);
+}
+
+.proxy-add-profile-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.proxy-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 450px;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.proxy-profile-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 10px 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--rounded-lg);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.proxy-profile-item:hover {
+  border-color: var(--line);
+  background: var(--gray-50);
+}
+
+.proxy-profile-item.active {
+  border-color: var(--gray-200);
+  background: var(--pine-wash);
+}
+
+.proxy-profile-item.active::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--pine);
+}
+
+.proxy-profile-item.editing {
+  border-color: var(--pine);
+}
+
+.proxy-profile-item-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.proxy-profile-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxy-profile-endpoint {
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--gray-500);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proxy-active-badge {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: var(--rounded-full);
+  background: white;
+  color: var(--pine-deep);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.proxy-profile-list-empty {
+  padding: 28px 10px;
+  color: var(--gray-400);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.proxy-profile-panel-hint {
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--gray-50);
+  color: var(--gray-500);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.proxy-editor {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.proxy-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--gray-50);
+}
+
+.proxy-editor-title {
+  margin-top: 3px;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.proxy-edit-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--gray-500);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.proxy-edit-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--gray-300);
+}
+
+.proxy-edit-status.dirty {
+  color: var(--warning-dark);
+}
+
+.proxy-edit-status.dirty::before {
+  background: var(--warning-color);
+}
+
+.proxy-form {
+  padding: 0 22px 22px;
+}
+
+.proxy-form-section {
+  padding-top: 22px;
+}
+
+.proxy-form-section + .proxy-form-section {
+  margin-top: 22px;
+  border-top: 1px solid var(--gray-100);
+}
+
+.proxy-form-section .section-title {
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+
+.proxy-form-section .form-row:last-child {
+  margin-bottom: 0;
+}
+
+.proxy-server-row {
+  align-items: flex-end;
+}
+
+.proxy-host-group {
+  flex: 2;
+}
+
+.proxy-port-group {
+  flex: 0 1 120px;
+}
+
+.proxy-protocol-group {
+  flex: 0 1 175px;
+}
+
+.proxy-toggle-row {
+  justify-content: flex-start;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.proxy-toggle-row > label:first-child {
+  color: var(--gray-700);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.proxy-auth-hint.warning {
+  color: var(--warning-dark);
+}
+
+.proxy-auth-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.proxy-bypass-footer {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
+.proxy-bypass-counter {
+  font-family: var(--mono);
+}
+
+.proxy-test-row {
+  align-items: flex-end;
+  margin-bottom: 0;
+}
+
+.proxy-test-button {
+  flex-shrink: 0;
+}
+
+.proxy-form-actions {
+  padding-top: 20px;
+  border-top: 1px solid var(--gray-100);
+}
+
+.proxy-actions-spacer {
+  flex: 1;
+}
+
+.proxy-empty-editor {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  min-height: 440px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.proxy-empty-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 76px;
+  height: 76px;
+  margin-bottom: 18px;
+  border: 1px dashed var(--gray-300);
+  border-radius: 50%;
+  background: var(--pine-wash);
+  color: var(--pine);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.proxy-empty-editor h3 {
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.proxy-empty-editor p {
+  max-width: 360px;
+  margin: 7px 0 18px;
+  color: var(--gray-500);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.page-error-container {
+  padding: 64px 20px;
+  border-radius: var(--rounded-xl);
+  background: var(--error-light);
+  color: var(--error-dark);
+  text-align: center;
+}
+
+.page-error-container h3 {
+  margin-bottom: 8px;
+}
+
+.page-error-container p {
+  margin-bottom: 16px;
+}
+
+.page-error-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 14px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  font-family: var(--mono);
+  font-size: 23px;
+  font-weight: 700;
+}
+
 /* ---------- Modal ---------- */
 .modal-overlay {
   position: fixed;
@@ -1503,6 +1923,26 @@ input:disabled + .slider {
   .main-content {
     padding: 20px;
   }
+
+  .proxy-workspace {
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 14px;
+  }
+
+  .proxy-form,
+  .proxy-editor-header {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
+  .proxy-server-row {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .proxy-host-group {
+    flex-basis: 100%;
+  }
 }
 
 @media (max-width: 768px) {
@@ -1522,5 +1962,32 @@ input:disabled + .slider {
   .modal {
     min-width: 0;
     width: calc(100% - 32px);
+  }
+
+  .proxy-workspace {
+    display: block;
+  }
+
+  .proxy-profile-panel {
+    position: static;
+    margin-bottom: 16px;
+  }
+
+  .proxy-profile-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 260px;
+  }
+
+  .proxy-profile-panel-hint {
+    display: none;
+  }
+
+  .proxy-auth-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .proxy-form-actions {
+    flex-wrap: wrap;
   }
 }

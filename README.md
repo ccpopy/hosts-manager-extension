@@ -28,7 +28,7 @@ Hosts Manager Extension lets you organize hosts mappings into reusable groups, t
 - Grouped rule management for different projects or environments
 - One-click enable/disable for groups without re-editing
 - Bulk import from files or clipboard in standard hosts format
-- Built-in socket proxy configuration with bypass list support
+- Named socket proxy profiles with bypass lists and quick switching
 - Local persistence; no data leaves your machine
 - Clean, modern UI built for Chrome/Edge Manifest V3
 
@@ -66,7 +66,8 @@ Hosts Manager Extension lets you organize hosts mappings into reusable groups, t
   192.168.1.100 dev.example.com
   192.168.1.101 api.example.com
   ```
-- Socket proxy setup: open Settings → Socket Proxy, enter server, port, protocol, optional auth, and bypass list, then save.
+- Socket proxy setup: open Settings → Socket Proxy to create and edit named profiles. Select one active profile, use the global switch to enable/disable proxying, or quickly switch profiles from the toolbar popup.
+- JSON backup/restore can include proxy profiles. Proxy passwords are excluded by default, and imported proxy profiles stay disabled until you enable them manually.
 
 ### Tech Stack
 
@@ -111,7 +112,7 @@ host/
 
 - [ ] Internationalization toggle in UI
 - [x] Search within hosts rules
-- [x] Export/import groups
+- [x] Export/import groups and proxy profiles
 - [ ] Performance optimizations for very large rule sets
 
 ### License

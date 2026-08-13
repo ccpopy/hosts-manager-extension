@@ -4,27 +4,26 @@
  */
 import MessageBridge from '../utils/MessageBridge.js';
 import { normalizeBypassRules } from '../utils/ValidationUtils.js';
+import {
+  DEFAULT_PROXY_CONFIG,
+  DEFAULT_PROXY_STORE,
+  createProxyProfileId,
+  normalizeProxyProfile,
+  normalizeProxyStore,
+  resolveActiveProxy
+} from '../utils/ProxyStore.js';
 
 class StateService {
   constructor() {
     // 初始状态
-    this.DEFAULT_SOCKET_PROXY = {
-      host: '',
-      port: '',
-      enabled: false,
-      protocol: 'SOCKS5',
-      auth: {
-        enabled: false,
-        username: '',
-        password: ''
-      },
-      bypassList: []
-    };
+    this.DEFAULT_SOCKET_PROXY = DEFAULT_PROXY_CONFIG;
+    this.DEFAULT_SOCKET_PROXY_STORE = DEFAULT_PROXY_STORE;
 
     this.state = {
       hostsGroups: [],
       activeGroups: [],
-      socketProxy: { ...this.DEFAULT_SOCKET_PROXY },
+      socketProxyStore: { ...this.DEFAULT_SOCKET_PROXY_STORE, profiles: [] },
+      socketProxy: this.cloneSocketProxy(this.DEFAULT_SOCKET_PROXY),
       showAddGroupForm: false
     };
 
@@ -53,11 +52,26 @@ class StateService {
     if (this.initialized) return;
 
     try {
-      const data = await this.getStorageData(['hostsGroups', 'activeGroups', 'socketProxy', 'showAddGroupForm']);
+      const data = await this.getStorageData([
+        'hostsGroups',
+        'activeGroups',
+        'socketProxyStore',
+        'socketProxy',
+        'showAddGroupForm'
+      ]);
 
       this.state.hostsGroups = data.hostsGroups || [];
       this.state.activeGroups = data.activeGroups || [];
-      this.state.socketProxy = this.normalizeSocketProxyConfig(data.socketProxy || this.state.socketProxy);
+      let socketProxyStore = this.normalizeSocketProxyStore(data.socketProxyStore, data.socketProxy);
+      if (!data.socketProxyStore) {
+        try {
+          const response = await MessageBridge.sendMessage({ action: 'getProxyStore' });
+          socketProxyStore = response.socketProxyStore;
+        } catch (error) {
+          console.warn('读取新版代理配置失败，暂时使用本地兼容数据:', error);
+        }
+      }
+      this.applySocketProxyStore(socketProxyStore);
       this.state.showAddGroupForm = data.showAddGroupForm || false;
 
       // 构建搜索索引
@@ -129,9 +143,17 @@ class StateService {
       }
 
       if (changes.socketProxy) {
-        this.state.socketProxy = this.normalizeSocketProxyConfig(
-          changes.socketProxy.newValue || this.state.socketProxy
-        );
+        // socketProxy 仅是新版仓库的兼容快照。只有尚未迁移时才读取旧数据，
+        // 防止旧页面写入单配置后覆盖整个多配置仓库。
+        if (!changes.socketProxyStore && !this.state.socketProxyStore.profiles.length) {
+          const legacyStore = this.normalizeSocketProxyStore(null, changes.socketProxy.newValue);
+          this.applySocketProxyStore(legacyStore);
+          stateChanged = true;
+        }
+      }
+
+      if (changes.socketProxyStore) {
+        this.applySocketProxyStore(this.normalizeSocketProxyStore(changes.socketProxyStore.newValue));
         stateChanged = true;
       }
 
@@ -166,6 +188,67 @@ class StateService {
   }
 
   /**
+   * 规范化多代理配置仓库
+   * @param {object} rawStore - 原始仓库
+   * @param {object} [legacyProxy] - 旧版单配置
+   * @returns {object} v2 配置仓库
+   */
+  normalizeSocketProxyStore(rawStore, legacyProxy) {
+    return normalizeProxyStore(rawStore, legacyProxy);
+  }
+
+  /**
+   * 同步配置仓库及旧版有效配置快照
+   * @param {object} store - v2 配置仓库
+   */
+  applySocketProxyStore(store) {
+    this.state.socketProxyStore = normalizeProxyStore(store);
+    this.state.socketProxy = resolveActiveProxy(this.state.socketProxyStore);
+  }
+
+  /**
+   * 深复制旧版代理快照
+   * @param {object} proxy - 代理配置
+   * @returns {object} 代理配置副本
+   */
+  cloneSocketProxy(proxy) {
+    return {
+      ...proxy,
+      auth: { ...(proxy.auth || {}) },
+      bypassList: [...(proxy.bypassList || [])]
+    };
+  }
+
+  /**
+   * 记录后台代理应用警告，供页面在保存后提示用户
+   * @param {object} response - 后台响应
+   */
+  applyProxyMutationResponse(response) {
+    this.applySocketProxyStore(response.socketProxyStore);
+    this.state.proxyApplyWarning = response.applied === false
+      ? (response.warning || '配置已保存，但代理规则暂未应用')
+      : null;
+    return {
+      committed: response.committed !== false,
+      applied: response.applied !== false,
+      warning: this.state.proxyApplyWarning
+    };
+  }
+
+  /**
+   * 返回最近一次代理写操作的应用结果。
+   * 配置提交与 PAC 应用是两个阶段，调用方需据此区分“已保存”和“已生效”。
+   * @returns {{committed: boolean, applied: boolean, warning: string|null}}
+   */
+  getProxyMutationStatus() {
+    return {
+      committed: true,
+      applied: !this.state.proxyApplyWarning,
+      warning: this.state.proxyApplyWarning || null
+    };
+  }
+
+  /**
    * 将状态保存到存储中
    * @param {boolean} [immediate=false] - 是否立即保存，不使用节流
    * @returns {Promise<void>}
@@ -183,7 +266,6 @@ class StateService {
         await this.setStorageData({
           hostsGroups: this.state.hostsGroups,
           activeGroups: this.state.activeGroups,
-          socketProxy: this.state.socketProxy,
           showAddGroupForm: this.state.showAddGroupForm
         });
 
@@ -219,6 +301,7 @@ class StateService {
   async updateProxySettings() {
     try {
       await MessageBridge.updateProxySettings();
+      this.state.proxyApplyWarning = null;
     } catch (error) {
       console.error('更新代理设置失败:', error);
       throw error;
@@ -331,7 +414,7 @@ class StateService {
    * 更新分组
    * @param {string} groupId - 分组ID
    * @param {object} updates - 更新对象
-   * @returns {Promise<boolean>} 是否更新成功
+   * @returns {Promise<object|false>} 提交与应用结果，失败时为 false
    */
   async updateGroup(groupId, updates) {
     const index = this.state.hostsGroups.findIndex(g => g.id === groupId);
@@ -535,13 +618,14 @@ class StateService {
   /**
    * 更新Socket代理配置
    * @param {object} proxy - 代理配置
-   * @returns {Promise<boolean>} 是否更新成功
+   * @returns {Promise<object|false>} 提交与应用结果，失败时为 false
    */
   async updateSocketProxy(proxy) {
-    // 备份原始代理配置
-    const originalProxy = { ...this.state.socketProxy };
-
-    // 规范化并合并配置
+    const mergeMutationResults = (first, second) => ({
+      committed: first.committed !== false && second.committed !== false,
+      applied: first.applied !== false && second.applied !== false,
+      warning: first.warning || second.warning || null
+    });
     const mergedProxy = this.normalizeSocketProxyConfig({
       ...this.state.socketProxy,
       ...(proxy || {}),
@@ -551,14 +635,164 @@ class StateService {
       }
     });
 
-    this.state.socketProxy = mergedProxy;
+    const activeProfileId = this.state.socketProxyStore.activeProfileId;
+    if (activeProfileId) {
+      const updated = await this.updateSocketProxyProfile(activeProfileId, mergedProxy);
+      if (!updated) return false;
+      if (this.state.socketProxyStore.enabled !== mergedProxy.enabled) {
+        const toggled = await this.setSocketProxyEnabled(mergedProxy.enabled);
+        if (!toggled) return false;
+        return mergeMutationResults(updated, toggled);
+      }
+      return updated;
+    }
 
+    const created = await this.addSocketProxyProfile({
+      ...mergedProxy,
+      id: createProxyProfileId(),
+      name: '默认代理'
+    }, { activate: true });
+    if (!created) return false;
+    if (this.state.socketProxyStore.enabled !== mergedProxy.enabled) {
+      const toggled = await this.setSocketProxyEnabled(mergedProxy.enabled);
+      if (!toggled) return false;
+      return mergeMutationResults(created, toggled);
+    }
+    return created;
+  }
+
+  /**
+   * 添加代理配置
+   * @param {object} profile - 新配置
+   * @param {object} [options] - 添加选项
+   * @returns {Promise<object|null>} 新配置 ID 与应用结果，失败时为 null
+   */
+  async addSocketProxyProfile(profile, options = {}) {
     try {
-      await this.saveState(true);
-      return true;
+      const normalized = normalizeProxyProfile({
+        ...(profile || {}),
+        id: profile?.id || createProxyProfileId()
+      });
+      const response = await MessageBridge.sendMessage({
+        action: 'createProxyProfile',
+        requestId: createProxyProfileId(),
+        profile: normalized,
+        activate: !!options.activate
+      });
+      this.applyProxyMutationResponse(response);
+      return {
+        id: response.profile?.id || normalized.id,
+        ...this.getProxyMutationStatus()
+      };
     } catch (error) {
-      this.state.socketProxy = originalProxy;
-      console.error('更新代理设置失败:', error);
+      console.error('添加代理配置失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 更新代理配置
+   * @param {string} profileId - 配置 ID
+   * @param {object} updates - 更新内容
+   * @returns {Promise<object|false>} 提交与应用结果，失败时为 false
+   */
+  async updateSocketProxyProfile(profileId, updates) {
+    try {
+      const response = await MessageBridge.sendMessage({
+        action: 'updateProxyProfile',
+        requestId: createProxyProfileId(),
+        profileId,
+        updates
+      });
+      this.applyProxyMutationResponse(response);
+      return this.getProxyMutationStatus();
+    } catch (error) {
+      console.error('更新代理配置失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 删除代理配置
+   * @param {string} profileId - 配置 ID
+   * @returns {Promise<object|false>} 提交与应用结果，失败时为 false
+   */
+  async deleteSocketProxyProfile(profileId) {
+    try {
+      const response = await MessageBridge.sendMessage({
+        action: 'deleteProxyProfile',
+        requestId: createProxyProfileId(),
+        profileId
+      });
+      this.applyProxyMutationResponse(response);
+      return this.getProxyMutationStatus();
+    } catch (error) {
+      console.error('删除代理配置失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 选择当前代理配置
+   * @param {string} profileId - 配置 ID
+   * @returns {Promise<object|false>} 提交与应用结果，失败时为 false
+   */
+  async selectSocketProxyProfile(profileId) {
+    try {
+      const response = await MessageBridge.sendMessage({
+        action: 'setActiveProxyProfile',
+        requestId: createProxyProfileId(),
+        profileId
+      });
+      this.applyProxyMutationResponse(response);
+      return this.getProxyMutationStatus();
+    } catch (error) {
+      console.error('切换代理配置失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 设置代理总开关
+   * @param {boolean} enabled - 是否启用
+   * @returns {Promise<object|false>} 提交与应用结果，失败时为 false
+   */
+  async setSocketProxyEnabled(enabled) {
+    try {
+      const response = await MessageBridge.sendMessage({
+        action: 'setProxyEnabled',
+        requestId: createProxyProfileId(),
+        enabled: !!enabled
+      });
+      this.applyProxyMutationResponse(response);
+      return this.getProxyMutationStatus();
+    } catch (error) {
+      console.error('切换代理状态失败:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 整体替换代理配置仓库
+   * @param {object} store - 新仓库
+   * @param {object} [options] - 替换选项
+   * @returns {Promise<object|false>} 提交与应用结果，失败时为 false
+   */
+  async replaceSocketProxyStore(store, options = {}) {
+    try {
+      const normalized = this.normalizeSocketProxyStore(store);
+      if (options.preserveEnabled) {
+        normalized.enabled = this.state.socketProxyStore.enabled && !!normalized.activeProfileId;
+      }
+      const response = await MessageBridge.sendMessage({
+        action: 'replaceProxyStore',
+        requestId: createProxyProfileId(),
+        socketProxyStore: normalized
+      });
+      this.applyProxyMutationResponse(response);
+      return this.getProxyMutationStatus();
+    } catch (error) {
+      console.error('替换代理配置失败:', error);
       return false;
     }
   }
@@ -679,11 +913,17 @@ class StateService {
    */
   async forceRefresh() {
     try {
-      const data = await this.getStorageData(['hostsGroups', 'activeGroups', 'socketProxy', 'showAddGroupForm']);
+      const data = await this.getStorageData([
+        'hostsGroups',
+        'activeGroups',
+        'socketProxyStore',
+        'socketProxy',
+        'showAddGroupForm'
+      ]);
 
       this.state.hostsGroups = data.hostsGroups || [];
       this.state.activeGroups = data.activeGroups || [];
-      this.state.socketProxy = this.normalizeSocketProxyConfig(data.socketProxy || this.state.socketProxy);
+      this.applySocketProxyStore(this.normalizeSocketProxyStore(data.socketProxyStore, data.socketProxy));
       this.state.showAddGroupForm = data.showAddGroupForm || false;
 
       this.buildSearchIndices();

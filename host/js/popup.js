@@ -18,7 +18,8 @@ let currentTab = { hostname: null, valid: false };
 
 // 操作状态管理
 const operationState = {
-  updating: false
+  updating: false,
+  warning: null
 };
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -54,8 +55,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       loadGroups();
       renderCurrentTab();
     }
-    if (changes.socketProxy) {
-      loadProxyStatus();
+    if (changes.socketProxy || changes.socketProxyStore) {
+      if (!operationState.updating) loadProxyStatus();
       renderCurrentTab();
     }
   });
@@ -393,11 +394,14 @@ async function loadGroups () {
 
 async function loadProxyStatus () {
   try {
-    const result = await chrome.storage.local.get(['socketProxy']);
+    const result = await chrome.storage.local.get(['socketProxy', 'socketProxyStore']);
     const socketProxy = result.socketProxy || {};
+    const proxyStore = normalizePopupProxyStore(result.socketProxyStore, socketProxy);
+    const activeProfile = proxyStore.profiles.find(profile => profile.id === proxyStore.activeProfileId) || null;
 
     const proxyStatus = document.getElementById('proxy-status');
     const proxyItem = document.getElementById('proxy-item');
+    const profilesContainer = document.getElementById('proxy-profiles');
 
     // 通过克隆移除旧的 change 监听器，再重新绑定
     let proxySwitch = document.getElementById('proxy-switch');
@@ -405,8 +409,10 @@ async function loadProxyStatus () {
     proxySwitch.parentNode.replaceChild(newSwitch, proxySwitch);
     proxySwitch = newSwitch;
 
+    renderProxyProfiles(profilesContainer, proxyStore);
+
     // 如果代理未配置，显示提示
-    if (!socketProxy.host || !socketProxy.port) {
+    if (!activeProfile || !activeProfile.host || !activeProfile.port) {
       proxyStatus.textContent = '未配置，点击设置';
       proxyStatus.title = '前往设置页配置 Socket 代理';
       proxySwitch.checked = false;
@@ -418,20 +424,25 @@ async function loadProxyStatus () {
         window.close();
       };
     } else {
-      // 显示代理状态，包含认证信息
-      const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
-      proxyStatus.textContent = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
-      proxyStatus.title = proxyStatus.textContent;
-      proxySwitch.checked = !!socketProxy.enabled;
-      proxySwitch.disabled = false;
+      // 优先显示配置名称，完整端点保留在悬浮提示中
+      const authInfo = activeProfile.auth && activeProfile.auth.enabled ? ' · 已认证' : '';
+      proxyStatus.textContent = activeProfile.name || `${activeProfile.host}:${activeProfile.port}`;
+      proxyStatus.title = `${activeProfile.protocol || 'SOCKS5'} ${activeProfile.host}:${activeProfile.port}${authInfo}`;
+      proxySwitch.checked = !!proxyStore.enabled;
+      proxySwitch.disabled = operationState.updating;
 
       proxyItem.classList.remove('clickable');
       proxyItem.onclick = null;
 
       // 代理开关事件
       proxySwitch.addEventListener('change', async () => {
-        await updateSocketProxyStatus(socketProxy, proxySwitch.checked);
+        await updateSocketProxyStatus(proxyStore, socketProxy, proxySwitch.checked);
       });
+    }
+
+    if (operationState.warning && !operationState.updating) {
+      proxyStatus.textContent = operationState.warning;
+      proxyStatus.title = operationState.warning;
     }
   } catch (error) {
     const proxyStatus = document.getElementById('proxy-status');
@@ -439,48 +450,169 @@ async function loadProxyStatus () {
   }
 }
 
+// 将新版配置仓库和旧版单配置统一为弹窗可渲染的结构
+function normalizePopupProxyStore (store, socketProxy) {
+  if (store && Array.isArray(store.profiles)) {
+    const profiles = store.profiles.filter(profile => profile && profile.id).map(profile => ({
+      ...profile,
+      name: String(profile.name || '未命名代理'),
+      auth: profile.auth || { enabled: false, username: '', password: '' },
+      bypassList: Array.isArray(profile.bypassList) ? profile.bypassList : []
+    }));
+
+    return {
+      schemaVersion: 2,
+      enabled: !!store.enabled,
+      activeProfileId: store.activeProfileId || null,
+      profiles
+    };
+  }
+
+  if (socketProxy && socketProxy.host && socketProxy.port) {
+    return {
+      schemaVersion: 1,
+      enabled: !!socketProxy.enabled,
+      activeProfileId: 'legacy',
+      profiles: [{ ...socketProxy, id: 'legacy', name: '当前配置' }]
+    };
+  }
+
+  return { schemaVersion: 2, enabled: false, activeProfileId: null, profiles: [] };
+}
+
+function renderProxyProfiles (container, proxyStore) {
+  if (!container) return;
+
+  container.innerHTML = '';
+  container.classList.toggle('visible', proxyStore.profiles.length > 1);
+
+  proxyStore.profiles.forEach(profile => {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'proxy-profile-option';
+    option.dataset.profileId = profile.id;
+    option.setAttribute('role', 'radio');
+
+    const isActive = profile.id === proxyStore.activeProfileId;
+    option.classList.toggle('active', isActive);
+    option.setAttribute('aria-checked', String(isActive));
+    option.title = `切换到 ${profile.name}`;
+
+    const marker = document.createElement('span');
+    marker.className = 'proxy-profile-marker';
+    marker.setAttribute('aria-hidden', 'true');
+
+    const copy = document.createElement('span');
+    copy.className = 'proxy-profile-copy';
+
+    const name = document.createElement('span');
+    name.className = 'proxy-profile-name';
+    name.textContent = profile.name;
+
+    const endpoint = document.createElement('span');
+    endpoint.className = 'proxy-profile-endpoint';
+    endpoint.textContent = `${profile.host || '—'}:${profile.port || '—'}`;
+
+    copy.appendChild(name);
+    copy.appendChild(endpoint);
+    option.appendChild(marker);
+    option.appendChild(copy);
+
+    option.addEventListener('click', async () => {
+      if (!isActive) await selectProxyProfile(profile.id);
+    });
+
+    container.appendChild(option);
+  });
+}
+
 // 更新Socket代理状态
-async function updateSocketProxyStatus (socketProxy, enabled) {
+async function updateSocketProxyStatus (proxyStore, socketProxy, enabled) {
+  if (operationState.updating) return;
+
   const proxySwitch = document.getElementById('proxy-switch');
   const proxyStatus = document.getElementById('proxy-status');
-  const authInfo = socketProxy.auth && socketProxy.auth.enabled ? ' (已认证)' : '';
-  const normalText = `${socketProxy.host}:${socketProxy.port}${authInfo}`;
 
   try {
-    // 防止重复操作
-    if (operationState.updating) {
-      return;
-    }
-
     operationState.updating = true;
 
     proxySwitch.disabled = true;
     proxyStatus.textContent = '更新中...';
 
-    await chrome.storage.local.set({
-      socketProxy: {
-        ...socketProxy,
-        enabled: enabled
+    if (proxyStore.schemaVersion === 2) {
+      const response = await sendProxyAction({ action: 'setProxyEnabled', enabled });
+      operationState.warning = null;
+      if (response.applied === false) {
+        operationState.warning = response.warning || '配置已保存，但代理规则暂未应用';
+        return;
       }
-    });
-
-    // 通知后台脚本更新代理设置
-    if (window.MessageBridge) {
-      await window.MessageBridge.updateProxySettings();
+    } else {
+      await chrome.storage.local.set({
+        socketProxy: { ...socketProxy, enabled }
+      });
+      if (window.MessageBridge) await window.MessageBridge.updateProxySettings();
+      operationState.warning = null;
     }
 
-    proxyStatus.textContent = normalText;
-    proxyStatus.title = normalText;
-    proxySwitch.disabled = false;
   } catch (error) {
-    // 后台监听 storage 变化仍会应用配置，这里只恢复 UI
-    proxyStatus.textContent = normalText;
-    proxyStatus.title = normalText;
-    proxySwitch.disabled = false;
     console.error('代理状态更新失败:', error);
   } finally {
     operationState.updating = false;
+    await loadProxyStatus();
   }
+}
+
+async function selectProxyProfile (profileId) {
+  if (operationState.updating) return;
+
+  const proxyStatus = document.getElementById('proxy-status');
+
+  try {
+    operationState.updating = true;
+    setProxyControlsDisabled(true);
+    if (proxyStatus) proxyStatus.textContent = '切换中...';
+
+    const response = await sendProxyAction({ action: 'setActiveProxyProfile', profileId });
+    operationState.warning = null;
+    if (response.applied === false) {
+      operationState.warning = response.warning || '配置已保存，但代理规则暂未应用';
+    }
+    renderCurrentTab();
+  } catch (error) {
+    console.error('切换代理配置失败:', error);
+  } finally {
+    operationState.updating = false;
+    await loadProxyStatus();
+  }
+}
+
+function setProxyControlsDisabled (disabled) {
+  const proxySwitch = document.getElementById('proxy-switch');
+  if (proxySwitch) proxySwitch.disabled = disabled;
+  document.querySelectorAll('.proxy-profile-option').forEach(option => {
+    option.disabled = disabled;
+  });
+}
+
+function sendProxyAction (message) {
+  const requestId = globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  const payload = { ...message, requestId };
+
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(payload, response => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!response || response.success !== true) {
+        reject(new Error(response && response.error ? response.error : '代理操作失败'));
+        return;
+      }
+      resolve(response);
+    });
+  });
 }
 
 /* ============================================================

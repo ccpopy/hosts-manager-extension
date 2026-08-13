@@ -173,12 +173,12 @@ export function isValidHost (host) {
  */
 export function isValidPort (port) {
   if (typeof port === 'string') {
-    port = parseInt(port, 10);
+    const value = port.trim();
+    if (!/^\d+$/.test(value)) return false;
+    port = Number(value);
   }
 
-  if (isNaN(port)) return false;
-
-  return port >= 1 && port <= 65535;
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 /**
